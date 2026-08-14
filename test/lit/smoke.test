@@ -1,0 +1,13 @@
+// RUN: kernelh-opt %s | FileCheck %s
+
+// Smoke test for the lit + FileCheck wiring (plan todo 5): kernelh-opt is the
+// mlir-opt-style driver from todo 4; it must round-trip a trivial module and
+// FileCheck must verify the piped output.
+
+// CHECK-LABEL: module
+module {
+  // CHECK: func.func @kernelh_smoke_noop
+  func.func @kernelh_smoke_noop() {
+    return
+  }
+}
