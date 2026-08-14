@@ -1,0 +1,39 @@
+// Vectorize pass lit tests (plan todo 17): width-4 rewriting of contiguous
+// atom.load/atom.store into atom.load_vec/atom.store_vec plus widening of the
+// pointwise compute to vector<4xf32>.
+//
+// The VEC fixture vectorizes its whole load/mul/add/store chain; the
+// CHECK-NOTs (after all positive checks) plus the grep RUN prove the scalar
+// load/store KINDS are entirely gone from the output (CHECK-NOT alone could
+// not distinguish atom.load_vec, which contains the substring atom.load).
+// The NONDIV fixture (tile extent 6, width 4) must exit non-zero with a
+// diagnostic naming the offending extent, and the unknown-pass probe must
+// still list vectorize among the registered passes.
+
+// RUN: kernelh-opt --load-atom %S/../../fixtures/passes/vectorize.atom --run-passes=vectorize --print-atom > %t.vec.out
+// RUN: FileCheck %s --check-prefix=VEC < %t.vec.out
+// RUN: not grep -E 'atom\.(load|store) ' %t.vec.out
+
+// Non-divisible tile extent: clean diagnostic (named extent), non-zero exit
+// via `not`, no partial output.
+// RUN: not kernelh-opt --load-atom %S/../../fixtures/passes/vectorize_nondiv.atom --run-passes=vectorize --print-atom 2>&1 | FileCheck %s --check-prefix=NONDIV
+
+// Unknown pass errors still list every registered pass (now incl. vectorize;
+// alphabetically last of the wave-4 passes, so a trailing CHECK-SAME is
+// robust against concurrently-landing passes).
+// RUN: not kernelh-opt --load-atom %S/../../fixtures/passes/vectorize.atom --run-passes=nonexistent 2>&1 | FileCheck %s --check-prefix=UNKNOWN
+
+// VEC: %v3 = atom.const 0 : index
+// VEC: %v4 = atom.load_vec %v0[%v3] : tensor<8xf32, global>, vector<4xf32>
+// VEC: %v5 = atom.load_vec %v1[%v3] : tensor<8xf32, global>, vector<4xf32>
+// VEC: %v6 = atom.mul %v4, %v5 : vector<4xf32>
+// VEC: %v7 = atom.add %v6, %v4 : vector<4xf32>
+// VEC: atom.store_vec %v7, %v2[%v3] : tensor<8xf32, global>, vector<4xf32>
+// VEC-NOT: {{atom\.load[^_]}}
+// VEC-NOT: {{atom\.store[^_]}}
+
+// NONDIV: error: vectorize: kernel 'vec_nondiv': tile extent 6 is not divisible by vector width 4
+
+// UNKNOWN: error: unknown pass 'nonexistent'
+// UNKNOWN: registered passes:
+// UNKNOWN-SAME: vectorize

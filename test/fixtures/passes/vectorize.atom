@@ -1,0 +1,19 @@
+// vectorize fixture: a contiguous load/mul/add/store chain on global tensors
+// with vector_width = 4 and tile extent 8 (divisible by 4). Every load
+// becomes atom.load_vec of width 4, the pointwise mul/add widen to
+// vector<4xf32>, and the store becomes atom.store_vec.
+atom.kernel @vec(%v0: tensor<8xf32, global>, %v1: tensor<8xf32, global>, %v2: tensor<8xf32, global>) {
+  tile = [8]
+  map_blocks = false
+  map_warps = false
+  use_shared_memory = false
+  vector_width = 4
+  unroll = 1
+  shape = {n = 8}
+  %v3 = atom.const 0 : index
+  %v4 = atom.load %v0[%v3] : tensor<8xf32, global>
+  %v5 = atom.load %v1[%v3] : tensor<8xf32, global>
+  %v6 = atom.mul %v4, %v5 : f32
+  %v7 = atom.add %v6, %v4 : f32
+  atom.store %v7, %v2[%v3] : tensor<8xf32, global>
+}

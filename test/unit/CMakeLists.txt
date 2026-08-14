@@ -13,6 +13,9 @@ add_executable(kernelh_unit
   dsl_test.cpp
   pass_canonicalize_test.cpp
   pass_cse_test.cpp
+  pass_tiling_test.cpp
+  pass_fusion_test.cpp
+  pass_vectorize_test.cpp
 )
 target_link_libraries(kernelh_unit PRIVATE Catch2::Catch2
   # WHOLE_ARCHIVE: force-load every pass object so its self-registration

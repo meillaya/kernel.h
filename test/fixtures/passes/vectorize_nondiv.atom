@@ -1,0 +1,17 @@
+// vectorize nondiv fixture: tile extent 6 is NOT divisible by vector width 4.
+// The pass must fail with a diagnostic naming the offending extent (and
+// leave the kernel untouched) - not crash, not emit partial vectorization.
+atom.kernel @vec_nondiv(%v0: tensor<8xf32, global>, %v1: tensor<8xf32, global>, %v2: tensor<8xf32, global>) {
+  tile = [6]
+  map_blocks = false
+  map_warps = false
+  use_shared_memory = false
+  vector_width = 4
+  unroll = 1
+  shape = {n = 8}
+  %v3 = atom.const 0 : index
+  %v4 = atom.load %v0[%v3] : tensor<8xf32, global>
+  %v5 = atom.load %v1[%v3] : tensor<8xf32, global>
+  %v6 = atom.mul %v4, %v5 : f32
+  atom.store %v6, %v2[%v3] : tensor<8xf32, global>
+}
