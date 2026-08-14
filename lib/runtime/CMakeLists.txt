@@ -13,13 +13,16 @@
 # ROCm/ROCM#6178); the todo-23 acceptance grep on this archive must find zero
 # hipMallocAsync references.
 #
-# STRONG WEAK-HOOK OVERRIDE: lib/runtime/query_cu_count.cpp defines the strong
-# kernelh::query_cu_count_runtime() (todo-10 weak-hook contract) that must win
-# over the weak default in lib/compiler at FINAL LINK time. Plain archive
-# extraction keeps the WEAK definition (a weak def satisfies the reference, so
-# the member is never pulled in - verified empirically, see the todo-23
-# evidence), so every consumer must force this library into the final link
-# with $<LINK_LIBRARY:WHOLE_ARCHIVE,kernelh_runtime> (kernelh_unit does).
+# STRONG WEAK-HOOK OVERRIDES: lib/runtime/query_cu_count.cpp defines the strong
+# kernelh::query_cu_count_runtime() (todo-10 weak-hook contract) and
+# lib/runtime/query_occupancy.cpp the strong
+# kernelh::compiler::query_occupancy_max_blocks_runtime() (todo-32
+# launch-verifier contract) that must win over the weak defaults in
+# lib/compiler at FINAL LINK time. Plain archive extraction keeps the WEAK
+# definitions (a weak def satisfies the reference, so the member is never
+# pulled in - verified empirically, see the todo-23 evidence), so every
+# consumer must force this library into the final link with
+# $<LINK_LIBRARY:WHOLE_ARCHIVE,kernelh_runtime> (kernelh_unit does).
 
 set(KERNELH_HIP_PATH "$ENV{HIP_PATH}")
 if(KERNELH_HIP_PATH STREQUAL "")
@@ -33,6 +36,7 @@ add_library(kernelh_runtime STATIC
   backend_hip.cpp
   backend_cuda.cpp
   query_cu_count.cpp
+  query_occupancy.cpp
   descriptor_packing.cpp
   device_context.cpp
   buffer.cpp
@@ -44,6 +48,12 @@ add_library(kernelh_runtime STATIC
 target_include_directories(kernelh_runtime PUBLIC "${CMAKE_SOURCE_DIR}/include")
 target_include_directories(kernelh_runtime PRIVATE
   "${KERNELH_HIP_PATH}/include")
+
+# The launch path (kernel_launch.cpp) pre-verifies every launch against the
+# device-limits table through the MLIR-free launch verifier (plan todo 32).
+# kernelh_compiler stays HIP-free (its occupancy hook is resolved through the
+# weak symbol defined in this library).
+target_link_libraries(kernelh_runtime PRIVATE kernelh_compiler)
 
 # hipcc auto-defines __HIP_PLATFORM_AMD__ only for HIP sources; plain clang
 # needs it manually or <hip/hip_runtime_api.h> #errors (todo-6 recipe).

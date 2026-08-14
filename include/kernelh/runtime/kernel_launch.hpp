@@ -12,6 +12,7 @@
 #ifndef KERNELH_RUNTIME_KERNEL_LAUNCH_HPP
 #define KERNELH_RUNTIME_KERNEL_LAUNCH_HPP
 
+#include "kernelh/compiler/device_limits.hpp"
 #include "kernelh/runtime/backend.hpp"
 #include "kernelh/runtime/descriptor_packing.hpp"
 
@@ -58,6 +59,9 @@ private:
   size_t shared_ = 0;
   StreamHandle stream_ = nullptr;
   mutable LaunchArgs args_;
+  // Cached device limits for the pre-launch verification (plan todo 32):
+  // resolved from the live device on the first launch, then reused.
+  mutable std::shared_ptr<const kernelh::DeviceLimits> limits_cache_;
 };
 
 } // namespace kernelh::runtime

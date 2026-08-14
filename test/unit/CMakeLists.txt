@@ -23,6 +23,7 @@ add_executable(kernelh_unit
   runtime_descriptor_test.cpp
   runtime_device_test.cpp
   runtime_integration_test.cpp
+  launch_verifier_test.cpp
   emitter_test.cpp
   backend_test.cpp
   canary_gpu_test.cpp
