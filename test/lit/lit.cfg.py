@@ -59,3 +59,11 @@ if not getattr(config, "_kernelh_cfg_loaded", False):
     # substituted above. A bare "kernelh" rule would re-write both.
     config.substitutions.append(("kernelh ", config.kernelh_bin + " "))
     config.substitutions.append(("FileCheck", config.filecheck_bin))
+
+    # lit 18 runs tests with a sanitized environment (a whitelist of vars
+    # only), so the toolkit roots the devenv shell exports never reach the RUN
+    # shells. The vendor-backend tests (plan todo 22) drive the NVVM/ROCDL
+    # pipelines and need them, so re-export explicitly when present.
+    for _kernelh_tk in ("ROCM_TOOLKIT_ROOT", "CUDA_TOOLKIT_ROOT"):
+        if _kernelh_tk in os.environ:
+            config.environment[_kernelh_tk] = os.environ[_kernelh_tk]

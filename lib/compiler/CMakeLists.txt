@@ -42,3 +42,59 @@ target_link_libraries(kernelh_emitter PUBLIC
   MLIRSupport
   LLVM
 )
+
+# kernelh_backends (plan todo 22): the in-process vendor lowering pipelines
+# (NVVM PTX/cubin + ROCDL HSACO/ISA + blob extraction) over a gpu.module.
+# Like kernelh_emitter this is a SEPARATE static library so kernelh_compiler
+# itself stays MLIR-free (the no-MLIR link of kernelh_weak_default_test only
+# pulls kernelh_compiler). The exact pass pipelines from todos 7/8 are driven
+# through mlir::PassManager - no shelling out to mlir-opt, no bare-ptr options.
+add_library(kernelh_backends STATIC backends.cpp)
+target_include_directories(kernelh_backends PUBLIC "${CMAKE_SOURCE_DIR}/include")
+target_link_libraries(kernelh_backends PUBLIC
+  kernelh_ir
+  kernelh_atom_mlir
+  MLIRGPUDialect
+  MLIRGPUTransforms
+  MLIRGPUToNVVMTransforms
+  MLIRGPUToROCDLTransforms
+  MLIRGPUToGPURuntimeTransforms
+  MLIRGPUPipelines
+  MLIRNVVMTarget
+  MLIRROCDLTarget
+  MLIRTargetLLVM
+  MLIRFuncToLLVM
+  MLIRControlFlowToLLVM
+  MLIRIndexToLLVM
+  MLIRArithToLLVM
+  MLIRMemRefToLLVM
+  MLIRMathToLLVM
+  MLIRComplexToLLVM
+  MLIRBuiltinToLLVMIRTranslation
+  MLIRGPUToLLVMIRTranslation
+  MLIRLLVMToLLVMIRTranslation
+  MLIRNVVMToLLVMIRTranslation
+  MLIRROCDLToLLVMIRTranslation
+  MLIRSPIRVToLLVMIRTranslation
+  MLIRVectorToLLVMPass
+  MLIRSCFToControlFlow
+  MLIRReconcileUnrealizedCasts
+  MLIRSCFDialect
+  MLIRMemRefDialect
+  MLIRVectorDialect
+  MLIRArithDialect
+  MLIRMathDialect
+  MLIRControlFlowDialect
+  MLIRFuncDialect
+  MLIRLLVMDialect
+  MLIRNVVMDialect
+  MLIRROCDLDialect
+  MLIRAMDGPUDialect
+  MLIRIR
+  MLIRPass
+  MLIRTransforms
+  MLIRTransformUtils
+  MLIRDialect
+  MLIRSupport
+  LLVM
+)

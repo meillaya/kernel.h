@@ -24,6 +24,7 @@ add_executable(kernelh_unit
   runtime_device_test.cpp
   runtime_integration_test.cpp
   emitter_test.cpp
+  backend_test.cpp
 )
 target_link_libraries(kernelh_unit PRIVATE Catch2::Catch2
   # WHOLE_ARCHIVE: force-load every pass object so its self-registration
@@ -34,6 +35,8 @@ target_link_libraries(kernelh_unit PRIVATE Catch2::Catch2
   # The MLIR emitter (plan todo 21): its PUBLIC MLIR/atom-dialect deps
   # propagate transitively.
   kernelh_emitter
+  # The vendor backends (plan todo 22): NVVM/ROCDL lowering + blob extraction.
+  kernelh_backends
   # WHOLE_ARCHIVE on kernelh_runtime too: its strong
   # query_cu_count_runtime() override (todo-10 weak-hook contract) must win
   # over the weak default in lib/compiler; plain archive extraction keeps the

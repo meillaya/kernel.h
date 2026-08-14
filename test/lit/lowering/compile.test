@@ -1,0 +1,34 @@
+// Vendor backend lowering tests (plan todo 22): kernelh-opt --compile-target
+// drives the in-process NVVM (PTX/cubin) and ROCDL (HSACO/ISA) pipelines on
+// the emitter's output (vecadd.atom) and on the hand-written todo-7 fixture
+// (w2_vecadd_gpu.mlir) through the mlir-input compile mode. Assertions are
+// content-based (ELF magic via od, PTX/ISA text markers, exit codes) - a blob
+// that merely "compiled" is caught by the magic-byte probe.
+
+// AMD artifacts (emitter path).
+// RUN: rm -rf %t.amd && kernelh-opt --load-atom %S/../../fixtures/vecadd.atom --emit-mlir --compile-target=amdgcn-gfx1101 --out %t.amd
+// RUN: test -f %t.amd/vecadd.hsaco && test -f %t.amd/vecadd.isa
+// RUN: head -c4 %t.amd/vecadd.hsaco | od -An -tx1 | grep -q '7f 45 4c 46'
+// RUN: grep -qE 's_waitcnt|v_add|ds_' %t.amd/vecadd.isa
+
+// NV artifacts (emitter path): the kernel-marker normalization makes the
+// emitter's gpu.func a real `.visible .entry` kernel.
+// RUN: rm -rf %t.nv && kernelh-opt --load-atom %S/../../fixtures/vecadd.atom --emit-mlir --compile-target=nvptx-sm_80 --out %t.nv
+// RUN: grep -q '\.visible \.entry vecadd(' %t.nv/vecadd.ptx
+// RUN: grep -q '\.target sm_80' %t.nv/vecadd.ptx
+// RUN: head -c4 %t.nv/vecadd.cubin | od -An -tx1 | grep -q '7f 45 4c 46'
+
+// The hand-written todo-7 fixture compiles through the mlir-input mode too.
+// RUN: rm -rf %t.w2 && kernelh-opt --compile-target=amdgcn-gfx1101 %S/../../fixtures/w2_vecadd_gpu.mlir --out %t.w2
+// RUN: head -c4 %t.w2/xchg_kernel.hsaco | od -An -tx1 | grep -q '7f 45 4c 46'
+
+// Bogus chips are rejected up front with a clean error (no SIGABRT-134).
+// RUN: not kernelh-opt --load-atom %S/../../fixtures/vecadd.atom --emit-mlir --compile-target=nvptx-sm_999 --out %t.bad 2>&1 | FileCheck %s --check-prefix=BADNV
+// RUN: not kernelh-opt --load-atom %S/../../fixtures/vecadd.atom --emit-mlir --compile-target=amdgcn-gfx999 --out %t.bad 2>&1 | FileCheck %s --check-prefix=BADAMD
+// BADNV: error: unknown NVPTX chip "sm_999"; valid chips: {{.*}}sm_80{{.*}}
+// BADAMD: error: unknown AMDGCN chip "gfx999"; valid chips: {{.*}}gfx1101{{.*}}
+
+// An empty ROCm toolkit must fail with a diagnostic naming the bitcode path.
+// RUN: rm -rf %t.emptytk && mkdir -p %t.emptytk
+// RUN: not env ROCM_TOOLKIT_ROOT=%t.emptytk kernelh-opt --load-atom %S/../../fixtures/vecadd.atom --emit-mlir --compile-target=amdgcn-gfx1101 --out %t.tkbad 2>&1 | FileCheck %s --check-prefix=TK
+// TK: {{.*}}bitcode{{.*}}

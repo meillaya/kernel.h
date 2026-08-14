@@ -44,6 +44,9 @@ target_link_libraries(kernelh-opt PRIVATE
   # device-only gpu.module. kernelh-opt already links the full MLIR static set
   # below, so the emitter's own MLIR deps are satisfied.
   kernelh_emitter
+  # The vendor backends (plan todo 22): --compile-target runs the NVVM/ROCDL
+  # pipelines in-process and writes PTX/cubin/HSACO/ISA artifacts to --out.
+  kernelh_backends
   ${KERNELH_MLIR_STATIC_LIBS}
   LLVM
 )
