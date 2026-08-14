@@ -90,3 +90,49 @@ AI = FLOPs / bytes moved, derived from the table above:
 
 No performance parity is claimed anywhere - these are measurements recorded
 for todo 38's charts.
+
+## charts.py (plan todo 38)
+
+`python3 scripts/charts.py [--csv build/bench/results.csv]
+[--out build/bench/charts]` (positional form `charts.py <csv> <out>` also
+accepted) reads the G32 results CSV and writes four PNGs plus a
+machine-readable summary into the out directory:
+
+- `gemm_gflops_vs_size.png` - GEMM GFLOPS vs N (log x) per backend line.
+- `elementwise_bw.png` - effective GB/s grouped bars for
+  softmax / layernorm / scan / fused_gelu.
+- `attention_gflops.png` - attention GFLOPS per sequence length.
+- `roofline.png` - Williams et al. roofline with the MEASURED ceilings from
+  the `roofline_triad` (BW) and `roofline_fma` (compute) rows. Kernel AI
+  points use the exact derivations below; the ridge point sits at
+  `AI = compute_ceiling / bw_ceiling` (flops/byte).
+- `charts_stats.csv` - one row per measured kernel row with
+  `kernel,backend,shape,ms_median,gflops_or_gbps,ai,ceiling_ai,ceiling_gflops`
+  (the `ai` column is asserted against these formulas by the unit test).
+
+### Exact AI derivations used by the chart kernel points
+
+- GEMM (m,n,k): `AI = 2mnk / ((mk + kn + mn) * 4)`.
+  - The four Q/K/V/O tensors of attention each hold `b*h*s*d` fp32 elements;
+    attention flops are `4*b*h*s^2*d` (QK^T + PV, 2 MACs each) over
+    `4*b*h*s*d*4` bytes, so `AI = s/4` exactly (independent of b,h,d).
+- softmax / layernorm / scan / fused_gelu: no FLOPs are counted for the
+  roofline (they are bandwidth-bound rows measured in GB/s), so their
+  `ai` column is `0.0` and they are NOT drawn as roofline AI points - they
+  appear as GB/s bars in `elementwise_bw.png` and their bandwidth ceiling is
+  the measured `roofline_triad` row. (For completeness the README bytes
+  table above defines exactly how many bytes each moves; softmax and
+  layernorm both move ~2*rows*cols*4 bytes, so an "AI" computed as
+  `2*elems*4 / elems*4` would just be the fp32 re-touch rate - the charts
+  intentionally plot the honest GB/s measurement instead of inflating a
+  flop count.)
+
+### Degraded mode
+
+- Charts are produced from whatever rows exist. If the `roofline_triad` /
+  `roofline_fma` rows are missing, `roofline.png` is still drawn with the
+  kernel points and the title carries "measured roofline ceilings
+  unavailable". If no local-execution backend rows exist the titles carry
+  "local execution unavailable".
+- A header-only / empty CSV exits non-zero with "no data rows" - empty
+  charts are never silently produced.

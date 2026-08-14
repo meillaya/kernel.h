@@ -1,0 +1,8 @@
+kernel,shape,backend,ms_median,gflops_or_gbps,timestamp,device
+roofline_triad,n=268435456,roofline,10.0,300.0,2026-08-14 00:00:00,Radeon RX 7800 XT
+roofline_fma,n=4194304,roofline,5.0,15000.0,2026-08-14 00:00:00,Radeon RX 7800 XT
+gemm,"m=512,n=512,k=512",kernelh,1.0,268.435456,2026-08-14 00:00:00,Radeon RX 7800 XT
+gemm,"m=512,n=512,k=512",rocblas,0.06,4473.924267,2026-08-14 00:00:00,Radeon RX 7800 XT
+gemm,"m=1024,n=1024,k=1024",kernelh,4.5,477.218588,2026-08-14 00:00:00,Radeon RX 7800 XT
+softmax,"rows=4096,cols=1024",kernelh,0.134217728,500.0,2026-08-14 00:00:00,Radeon RX 7800 XT
+attention,"batch=2,heads=8,seq=512,head_dim=64",kernelh,26.8435456,40.0,2026-08-14 00:00:00,Radeon RX 7800 XT
