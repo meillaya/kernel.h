@@ -4,3 +4,4 @@
 # truth for device constants; DSL/passes/runtime arrive with later todos.
 add_subdirectory(ir)
 add_subdirectory(compiler)
+add_subdirectory(dsl)

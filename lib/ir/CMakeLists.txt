@@ -11,6 +11,7 @@ add_library(kernelh_ir STATIC
   printer.cpp
   parser.cpp
   pass_manager.cpp
+  builder.cpp
 )
 
 target_include_directories(kernelh_ir PUBLIC "${CMAKE_SOURCE_DIR}/include")

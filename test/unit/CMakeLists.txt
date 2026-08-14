@@ -10,8 +10,9 @@ add_executable(kernelh_unit
   ir_printer_test.cpp
   ir_parser_test.cpp
   ir_pass_manager_test.cpp
+  dsl_test.cpp
 )
-target_link_libraries(kernelh_unit PRIVATE Catch2::Catch2 kernelh_compiler kernelh_ir)
+target_link_libraries(kernelh_unit PRIVATE Catch2::Catch2 kernelh_compiler kernelh_ir kernelh_dsl)
 
 # Bake the degraded-mode flag path into the binary (path resolved in
 # test/CMakeLists.txt from $ENV{KERNELH_DEGRADED_FLAG}) and the repo root (for
