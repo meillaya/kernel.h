@@ -30,6 +30,11 @@ add_mlir_tool(kernelh-opt main.cpp)
 # with -fno-exceptions, so re-enable exceptions for this one TU only.
 set_source_files_properties(main.cpp PROPERTIES COMPILE_OPTIONS "-fexceptions")
 target_link_libraries(kernelh-opt PRIVATE
+  # kernelh_passes is force-loaded (WHOLE_ARCHIVE) so every pass object file is
+  # present at startup and its self-registration initializer runs - a plain
+  # archive link would drop every pass (nothing references its symbols) and
+  # --run-passes would always report "registered passes: (none)".
+  $<LINK_LIBRARY:WHOLE_ARCHIVE,kernelh_passes>
   kernelh_ir
   kernelh_compiler
   ${KERNELH_MLIR_STATIC_LIBS}

@@ -1,0 +1,98 @@
+// Canonicalize pass lit tests (plan todo 13): constant folding, identity
+// elision, and dead-op elimination, verified with FileCheck.
+//
+// The FOLD fixture folds every pure elementwise op on const operands and
+// elides every identity chain; the CHECK-NOTs + the grep RUN prove the
+// foldable/elidable op KINDS are entirely gone (not just exit 0).
+
+// RUN: kernelh-opt --load-atom %S/../../fixtures/passes/fold.atom --run-passes=canonicalize --print-atom > %t.fold.out
+// RUN: FileCheck %s --check-prefix=FOLD < %t.fold.out
+// RUN: not grep -E 'atom\.(add|mul|div|fma|cmp|math)' %t.fold.out
+
+// Dead-op elimination: side-effecting ops (store/barrier) and the unused
+// loop_for survive; every dead pure op is gone.
+// RUN: kernelh-opt --load-atom %S/../../fixtures/passes/dce.atom --run-passes=canonicalize --print-atom > %t.dce.out
+// RUN: FileCheck %s --check-prefix=DCE < %t.dce.out
+// RUN: not grep -E 'atom\.(add|mul|alloc_shared)' %t.dce.out
+
+// Integer div-by-zero failure probe: the op must NOT fold (UB in this IR).
+// RUN: kernelh-opt --load-atom %S/../../fixtures/passes/div0.atom --run-passes=canonicalize --print-atom | FileCheck %s --check-prefix=DIV0
+
+// Float x*0 survival probe: IEEE 0*x is NaN for inf/NaN x, so the mul must
+// survive canonicalize untouched.
+// RUN: kernelh-opt --load-atom %S/../../fixtures/passes/float_mul0.atom --run-passes=canonicalize --print-atom | FileCheck %s --check-prefix=FLOAT0
+
+// Unknown pass errors and lists every globally-registered pass.
+// RUN: not kernelh-opt --load-atom %S/../../fixtures/passes/fold.atom --run-passes=nonexistent 2>&1 | FileCheck %s --check-prefix=UNKNOWN
+
+// FOLD-LABEL: atom.kernel @fold(
+// FOLD: %v2 = atom.const 3.75 : f32
+// FOLD-NOT: atom.mul
+// FOLD-NOT: atom.add
+// FOLD-NOT: atom.div
+// FOLD-NOT: atom.math
+// FOLD: %v3 = atom.const 1.875 : f32
+// FOLD-NOT: atom.fma
+// FOLD: %v4 = atom.const 1 : i32
+// FOLD-NOT: atom.cmp
+// FOLD: %v5 = atom.select
+// FOLD: %v6 = atom.const 0 : index
+// FOLD: atom.store
+// FOLD: %v7 = atom.const 500 : i32
+// FOLD-NOT: atom.mul
+// FOLD-NOT: atom.add
+// FOLD: %v8 = atom.const 50000 : i32
+// FOLD-NOT: atom.mul
+// FOLD: atom.store
+// FOLD: atom.store
+// FOLD: %v9 = atom.const 4.875 : f32
+// FOLD-NOT: atom.add
+// FOLD: atom.store
+// FOLD: %v10 = atom.thread_id x : index
+// FOLD-NOT: atom.add
+// FOLD-NOT: atom.mul
+// FOLD-NOT: atom.div
+// FOLD: %v11 = atom.load
+// FOLD: %v12 = atom.load
+// FOLD: %v13 = atom.const 0 : index
+// FOLD-NOT: atom.mul
+// FOLD: atom.store
+// FOLD: atom.store
+
+// DCE-LABEL: atom.kernel @dce(
+// DCE: %v1 = atom.const 0 : index
+// DCE-NOT: atom.add
+// DCE-NOT: atom.mul
+// DCE-NOT: atom.alloc_shared
+// DCE: %v2 = atom.const 1 : index
+// DCE: %v3 = atom.const 2 : index
+// DCE: %v4 = atom.load
+// DCE-NOT: atom.mul
+// DCE-NOT: atom.add
+// DCE: atom.store
+// DCE-NOT: atom.mul
+// DCE-NOT: atom.alloc_shared
+// DCE: atom.loop_for
+// DCE: %v5 = atom.const 3 : f32
+// DCE: atom.store
+// DCE: atom.barrier
+
+// DIV0-LABEL: atom.kernel @div0(
+// DIV0: %v1 = atom.const 7 : i32
+// DIV0: %v2 = atom.const 0 : i32
+// DIV0: %v3 = atom.div %v1, %v2 : i32
+// DIV0: atom.store
+// DIV0-NOT: atom.add
+// DIV0-NOT: atom.mul
+
+// FLOAT0-LABEL: atom.kernel @float_mul0(
+// FLOAT0: %v2 = atom.const 0 : index
+// FLOAT0: %v3 = atom.load
+// FLOAT0: %v4 = atom.const 0 : f32
+// FLOAT0: %v5 = atom.mul %v3, %v4 : f32
+// FLOAT0: atom.store
+// FLOAT0-NOT: atom.add
+// FLOAT0-NOT: atom.div
+
+// UNKNOWN: error: unknown pass 'nonexistent'
+// UNKNOWN: registered passes: canonicalize, cse

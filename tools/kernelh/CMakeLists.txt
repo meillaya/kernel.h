@@ -14,6 +14,10 @@ add_mlir_tool(kernelh main.cpp)
 set_source_files_properties(main.cpp PROPERTIES COMPILE_OPTIONS "-fexceptions")
 
 target_link_libraries(kernelh PRIVATE
+  # WHOLE_ARCHIVE: force-load every pass object so its self-registration
+  # initializer runs (see lib/passes/CMakeLists.txt). A plain archive link
+  # would drop all passes and leave the global registry empty.
+  $<LINK_LIBRARY:WHOLE_ARCHIVE,kernelh_passes>
   kernelh_dsl
   kernelh_ir
   kernelh_compiler

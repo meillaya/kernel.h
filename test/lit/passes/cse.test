@@ -1,0 +1,31 @@
+// CSE pass lit tests (plan todo 13): value-numbered common-subexpression
+// elimination within a block scope.
+//
+// The CSE fixture duplicates a mul and an add; both duplicates are erased and
+// their uses rewritten to the first computation. Identical loads are NOT
+// merged (memory reads excluded), so two atom.load lines must remain.
+
+// RUN: kernelh-opt --load-atom %S/../../fixtures/passes/cse.atom --run-passes=cse --print-atom > %t.cse.out
+// RUN: FileCheck %s < %t.cse.out
+
+// CHECK-LABEL: atom.kernel @cse(
+// CHECK: %v1 = atom.const 0 : index
+// CHECK: %v2 = atom.load
+// CHECK: %v3 = atom.load
+// CHECK: %v4 = atom.const 2 : f32
+// CHECK: %v5 = atom.mul %v2, %v4 : f32
+// CHECK-NOT: atom.mul %v2, %v4
+// CHECK: %v6 = atom.add %v2, %v4 : f32
+// CHECK-NOT: atom.add %v2, %v4
+// CHECK: %v7 = atom.mul %v3, %v4 : f32
+// CHECK: atom.store
+// CHECK-NOT: atom.mul %v2, %v4
+// CHECK-NOT: atom.add %v2, %v4
+// CHECK: atom.store
+// CHECK-NOT: atom.mul %v2, %v4
+// CHECK-NOT: atom.add %v2, %v4
+// CHECK: atom.store
+// CHECK-NOT: atom.mul %v2, %v4
+// CHECK-NOT: atom.add %v2, %v4
+// CHECK: atom.store
+// CHECK: atom.store

@@ -1,0 +1,32 @@
+// Dead-op elimination fixture for the canonicalize lit test. Unused pure ops
+// (const/add/mul/load/alloc_shared chains) are removed; side-effecting ops
+// (store/barrier) and an unused loop_for are preserved.
+atom.kernel @dce(%v0: tensor<8xf32, global>) {
+  tile = []
+  map_blocks = false
+  map_warps = false
+  use_shared_memory = false
+  vector_width = 1
+  unroll = 1
+  shape = {}
+  %v1 = atom.const 0 : index
+  %v2 = atom.const 1 : index
+  %v3 = atom.const 2 : index
+  %v4 = atom.add %v2, %v3 : index
+  %v5 = atom.mul %v1, %v2 : index
+  %v6 = atom.load %v0[%v1] : tensor<8xf32, global>
+  %v7 = atom.mul %v6, %v6 : f32
+  %v8 = atom.const 1 : f32
+  %v9 = atom.mul %v6, %v8 : f32
+  atom.store %v6, %v0[%v2] : tensor<8xf32, global>
+  %v10 = atom.alloc_shared : tensor<4xf32, shared>
+  %v11 = atom.load %v10[%v1] : tensor<4xf32, shared>
+  %v12 = atom.mul %v11, %v11 : f32
+  atom.loop_for %v1 to %v3 step %v2 iter_args() -> () {
+    ^bb0(%v14: index):
+      atom.yield
+  }
+  %v15 = atom.const 3 : f32
+  atom.store %v15, %v0[%v1] : tensor<8xf32, global>
+  atom.barrier
+}

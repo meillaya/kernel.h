@@ -217,9 +217,10 @@ int runAtomMode(const AtomOptions &options) {
   }
 
   if (options.hasRunPasses) {
-    kernelh::ir::PassRegistry registry; // empty until todos 13+ register
+    // Global registry: pass .cpp files self-register via static initializers
+    // (lib/passes/CMakeLists.txt contract), so no registry is built by hand.
     const auto result = kernelh::ir::runPasses(
-        module, options.passPipeline, registry,
+        module, options.passPipeline,
         options.hasDumpDir ? std::string_view(options.dumpDir)
                            : std::string_view());
     if (!result) {

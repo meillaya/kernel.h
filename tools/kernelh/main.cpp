@@ -286,11 +286,11 @@ int runCompile(const CompileOptions &options) {
   }
 
   // 3. Optional pass-manager dumps: the empty pipeline still writes
-  //    00-input.atom through the todo-9 dump hook.
+  //    00-input.atom through the todo-9 dump hook. The global registry path
+  //    (todo 13) uses whatever passes self-registered at static init.
   if (options.hasDumpDir) {
-    kernelh::ir::PassRegistry registry; // empty until todos 13+ register
     const auto result =
-        kernelh::ir::runPasses(module, "", registry, options.dumpDir);
+        kernelh::ir::runPasses(module, "", options.dumpDir);
     if (!result) {
       std::cerr << "error: " << result.error() << "\n";
       return kExitOperational;

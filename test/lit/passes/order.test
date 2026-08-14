@@ -1,0 +1,20 @@
+// Pass-order lock (plan todo 13): --run-passes=canonicalize,cse executes both
+// in order, writing per-pass dumps that re-parse. The CSE dump must show the
+// CSE effect on the canonicalized output: fold.atom canonicalizes to TWO
+// identical `atom.const 0 : index`, and CSE merges them into ONE.
+
+// RUN: kernelh-opt --load-atom %S/../../fixtures/passes/fold.atom --run-passes=canonicalize,cse --dump-dir %t.dump --print-atom > %t.out
+// RUN: test -f %t.dump/00-input.atom
+// RUN: test -f %t.dump/01-canonicalize.atom
+// RUN: test -f %t.dump/02-cse.atom
+// RUN: test ! -f %t.dump/03-canonicalize.atom
+// RUN: kernelh-opt --load-atom %t.dump/01-canonicalize.atom --print-atom | FileCheck %s --check-prefix=ONECAN
+// RUN: kernelh-opt --load-atom %t.dump/02-cse.atom --print-atom | FileCheck %s --check-prefix=TWOCSE
+
+// ONECAN-LABEL: atom.kernel @fold(
+// ONECAN: atom.select
+// ONECAN-COUNT-2: atom.const 0 : index
+
+// TWOCSE-LABEL: atom.kernel @fold(
+// TWOCSE: atom.select
+// TWOCSE-COUNT-1: atom.const 0 : index

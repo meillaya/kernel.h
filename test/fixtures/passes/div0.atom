@@ -1,0 +1,16 @@
+// Integer div-by-zero failure probe: atom.div with a zero divisor must NOT
+// fold (undefined behavior in this IR); the op is left intact.
+atom.kernel @div0(%v0: tensor<8xi32, global>) {
+  tile = []
+  map_blocks = false
+  map_warps = false
+  use_shared_memory = false
+  vector_width = 1
+  unroll = 1
+  shape = {}
+  %v1 = atom.const 7 : i32
+  %v2 = atom.const 0 : i32
+  %v3 = atom.div %v1, %v2 : i32
+  %v4 = atom.const 0 : index
+  atom.store %v3, %v0[%v4] : tensor<8xi32, global>
+}

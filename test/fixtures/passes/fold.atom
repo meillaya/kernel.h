@@ -1,0 +1,50 @@
+// Constant folding + identity elision fixture for the canonicalize lit test.
+// After canonicalize: every pure elementwise op on const operands folds to a
+// single atom.const; identity chains collapse; dead consts are removed. All
+// results are stored so DCE keeps them.
+atom.kernel @fold(%v0: tensor<8xf32, global>, %v1: tensor<8xi32, global>) {
+  tile = []
+  map_blocks = false
+  map_warps = false
+  use_shared_memory = false
+  vector_width = 1
+  unroll = 1
+  shape = {}
+  %v2 = atom.const 1.5 : f32
+  %v3 = atom.const 2.5 : f32
+  %v4 = atom.mul %v2, %v3 : f32
+  %v5 = atom.const 0 : f32
+  %v6 = atom.add %v4, %v5 : f32
+  %v7 = atom.const 0.5 : f32
+  %v8 = atom.fma %v4, %v7, %v5 : f32
+  %v9 = atom.const 4 : f32
+  %v10 = atom.cmp lt %v4, %v9 : f32
+  %v11 = atom.select %v10, %v6, %v8 : f32
+  %v12 = atom.const 0 : index
+  atom.store %v11, %v0[%v12] : tensor<8xf32, global>
+  %v13 = atom.const 2 : i32
+  %v14 = atom.const 3 : i32
+  %v15 = atom.add %v13, %v14 : i32
+  %v16 = atom.const 100 : i32
+  %v17 = atom.mul %v15, %v16 : i32
+  %v18 = atom.mul %v17, %v16 : i32
+  atom.store %v17, %v1[%v12] : tensor<8xi32, global>
+  atom.store %v18, %v1[%v12] : tensor<8xi32, global>
+  %v19 = atom.const 9 : f32
+  %v20 = atom.math sqrt %v19 : f32
+  %v21 = atom.const 1 : f32
+  %v22 = atom.div %v20, %v21 : f32
+  %v23 = atom.add %v22, %v8 : f32
+  atom.store %v23, %v0[%v12] : tensor<8xf32, global>
+  %v24 = atom.const 1 : index
+  %v25 = atom.thread_id x : index
+  %v26 = atom.const 0 : index
+  %v27 = atom.add %v25, %v26 : index
+  %v28 = atom.mul %v27, %v24 : index
+  %v29 = atom.load %v0[%v28] : tensor<8xf32, global>
+  %v30 = atom.div %v25, %v24 : index
+  %v31 = atom.load %v0[%v30] : tensor<8xf32, global>
+  %v32 = atom.mul %v25, %v26 : index
+  atom.store %v31, %v0[%v25] : tensor<8xf32, global>
+  atom.store %v29, %v0[%v32] : tensor<8xf32, global>
+}

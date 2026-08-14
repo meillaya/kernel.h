@@ -51,6 +51,38 @@ std::expected<void, std::string> runPasses(Module &module,
                                            const PassRegistry &registry,
                                            std::string_view dumpDir = "");
 
+// ---------------------------------------------------------------------------
+// Global pass registry (Meyers singleton inside pass_manager.cpp; plan todo
+// 13).
+//
+// Pass libraries (lib/passes/*.cpp) self-register from a file-scope static
+// initializer:
+//
+//   static const bool kRegistered =
+//       (kernelh::ir::registerPass("canonicalize", canonicalizePass), true);
+//
+// The backing map is a function-local static, so registration is safe against
+// static-initialization-order fiasco: whichever TU initializes first, the map
+// is constructed on first use. Because kernelh_passes is force-loaded into the
+// tools (WHOLE_ARCHIVE, see lib/passes/CMakeLists.txt), every pass object file
+// is present at startup and every self-registration initializer runs.
+// ---------------------------------------------------------------------------
+
+// Registers `fn` under `name` in the GLOBAL registry (a later registration
+// with the same name replaces the earlier one).
+void registerPass(std::string name, PassFn fn);
+
+// Names of all globally-registered passes, sorted (for deterministic listings
+// and error messages).
+std::vector<std::string> registeredPasses();
+
+// Runs a comma-separated pipeline ("a,b,c") in order through the GLOBAL
+// registry, snapshotted into a PassRegistry at call time (so the error
+// messages and dump hooks above are reused as-is). Same dump behavior.
+std::expected<void, std::string> runPasses(Module &module,
+                                           std::string_view pipeline,
+                                           std::string_view dumpDir = "");
+
 } // namespace kernelh::ir
 
 #endif // KERNELH_IR_PASS_MANAGER_HPP

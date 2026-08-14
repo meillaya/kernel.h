@@ -7,12 +7,54 @@
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
+#include <map>
 #include <string>
 #include <string_view>
 #include <utility>
 #include <vector>
 
 namespace kernelh::ir {
+
+// ---------------------------------------------------------------------------
+// Global registry (plan todo 13). Function-local static (Meyers singleton):
+// pass .cpp files self-register from file-scope static initializers, and the
+// map is constructed on first use regardless of static-init order.
+// ---------------------------------------------------------------------------
+
+namespace {
+
+std::map<std::string, PassFn, std::less<>> &globalPassRegistry() {
+  static std::map<std::string, PassFn, std::less<>> registry;
+  return registry;
+}
+
+} // namespace
+
+void registerPass(std::string name, PassFn fn) {
+  globalPassRegistry()[std::move(name)] = std::move(fn);
+}
+
+std::vector<std::string> registeredPasses() {
+  std::vector<std::string> names;
+  names.reserve(globalPassRegistry().size());
+  for (const auto &[name, unused] : globalPassRegistry()) {
+    (void)unused;
+    names.push_back(name);
+  }
+  return names;
+}
+
+std::expected<void, std::string> runPasses(Module &module,
+                                           std::string_view pipeline,
+                                           std::string_view dumpDir) {
+  // Snapshot the global registry into a PassRegistry so the existing
+  // pipeline-splitting, unknown-pass errors, and dump hooks are reused as-is.
+  PassRegistry registry;
+  for (const auto &[name, fn] : globalPassRegistry()) {
+    registry.registerPass(name, fn);
+  }
+  return runPasses(module, pipeline, registry, dumpDir);
+}
 
 void PassRegistry::registerPass(std::string name, PassFn fn) {
   passes_[std::move(name)] = std::move(fn);

@@ -1,0 +1,17 @@
+// Float x*0 survival probe: IEEE 0*x is NaN when x is inf/NaN, so the float
+// identity fold is deliberately NOT applied to multiplication by zero. The
+// atom.mul must survive canonicalize untouched.
+atom.kernel @float_mul0(%v0: tensor<8xf32, global>, %v1: tensor<8xf32, global>) {
+  tile = []
+  map_blocks = false
+  map_warps = false
+  use_shared_memory = false
+  vector_width = 1
+  unroll = 1
+  shape = {}
+  %v2 = atom.const 0 : index
+  %v3 = atom.load %v0[%v2] : tensor<8xf32, global>
+  %v4 = atom.const 0 : f32
+  %v5 = atom.mul %v3, %v4 : f32
+  atom.store %v5, %v1[%v2] : tensor<8xf32, global>
+}
