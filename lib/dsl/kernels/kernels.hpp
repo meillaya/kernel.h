@@ -34,6 +34,11 @@ void registerLayernormKernel();
 // 27): row-wise safe online single-pass softmax (running max + running sum
 // with rescale through loop_for iter_args). Called by ensureBuiltinKernels.
 void registerSoftmaxKernel();
+// Registers the scan templates (lib/dsl/kernels/scan.cpp, plan todo 29):
+// "scan" (pass-1 two-pass Blelloch upsweep+downsweep in static LDS, writing
+// block totals) and "scan_totals" (pass-2: scan of the block totals + add
+// offsets). Both are called by ensureBuiltinKernels.
+void registerScanKernel();
 
 } // namespace kernelh::detail
 

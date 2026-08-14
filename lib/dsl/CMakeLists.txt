@@ -9,6 +9,7 @@ add_library(kernelh_dsl STATIC
   kernels/gemm.cpp
   kernels/layernorm.cpp
   kernels/softmax.cpp
+  kernels/scan.cpp
 )
 
 target_link_libraries(kernelh_dsl PUBLIC kernelh_ir)
