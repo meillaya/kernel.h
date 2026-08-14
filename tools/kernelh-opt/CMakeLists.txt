@@ -25,8 +25,13 @@ foreach(_line IN LISTS _kernelh_mlir_target_lines)
 endforeach()
 
 add_mlir_tool(kernelh-opt main.cpp)
+# kernelh-opt catches std::invalid_argument from device_limits_for() to turn
+# an unknown --atom-target into a clean error; the LLVM/MLIR toolchain builds
+# with -fno-exceptions, so re-enable exceptions for this one TU only.
+set_source_files_properties(main.cpp PROPERTIES COMPILE_OPTIONS "-fexceptions")
 target_link_libraries(kernelh-opt PRIVATE
   kernelh_ir
+  kernelh_compiler
   ${KERNELH_MLIR_STATIC_LIBS}
   LLVM
 )

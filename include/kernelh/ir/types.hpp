@@ -10,9 +10,10 @@
 //     tiles; dynamic extents live in `index` VALUES, never in tensor dims.
 //   vector<WxE> - only used by atom.load_vec / atom.store_vec.
 //
-// PLAN F2 NOTE: this header carries NO device constants (the LDS size lives
-// in verifier.hpp as kDefaultLdsLimitBytes until todo 10a swaps it for the
-// device-limits table lookup).
+// PLAN F2 NOTE: this header carries NO device constants; the LDS budget is
+// read by the verifier from the device-limits table
+// (kernelh::device_limits_for / DeviceLimits::lds_bytes_per_workgroup, todo
+// 10a) supplied by the caller of verifyModule.
 
 #ifndef KERNELH_IR_TYPES_HPP
 #define KERNELH_IR_TYPES_HPP

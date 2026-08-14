@@ -11,15 +11,26 @@
 //     so there is no reduce scope to forbid them in - the generic
 //     allowed-block rule is implemented anyway so it extends when regions
 //     grow),
-//   - static shared total <= kDefaultLdsLimitBytes,
+//   - static shared total <= the caller-supplied device LDS budget
+//     (DeviceLimits::lds_bytes_per_workgroup; todo 10a switchover from the
+//     placeholder LDS constant),
 //   - loop_for iter_args <-> yield / body-arg consistency,
 //   - kernel schedule-attr validity (tile positive, vector_width >= 1,
 //     unroll >= 1),
 //   - scalar const values fit their type (i32 must fit int32_t).
+//
+// The verifier is DEVICE-AGNOSTIC: the shared-memory budget is supplied by the
+// CALLER as a kernelh::DeviceLimits (see kernelh/compiler/device_limits.hpp),
+// so lib/ir itself stays self-contained and does NOT link kernelh_compiler.
+// The one-argument verifyModule(module) convenience overload (which defaults
+// to kernelh::device_limits_for("gfx1101")) is defined inline here, so the
+// device_limits_for symbol is pulled in only by binaries that call it - and
+// those must link kernelh_compiler at final link time.
 
 #ifndef KERNELH_IR_VERIFIER_HPP
 #define KERNELH_IR_VERIFIER_HPP
 
+#include "kernelh/compiler/device_limits.hpp"
 #include "kernelh/ir/module.hpp"
 
 #include <cstdint>
@@ -27,12 +38,6 @@
 #include <vector>
 
 namespace kernelh::ir {
-
-// Maximum static shared-memory (LDS) bytes per workgroup. PLACEHOLDER until
-// todo 10a switches the verifier to the device-limits table
-// (kernelh::device_limits_for); the LDS check lives in ONE function
-// (verifyKernelSharedLimit) so that swap is a single edit.
-inline constexpr int64_t kDefaultLdsLimitBytes = 65536;
 
 struct Diagnostic {
   enum class Severity : uint8_t { Error, Warning };
@@ -46,11 +51,28 @@ struct Diagnostic {
 
 using Diagnostics = std::vector<Diagnostic>;
 
-// Verifies the whole module; returns ALL violations (empty on success).
-Diagnostics verifyModule(const Module &module);
+// Verifies the whole module against the given device's limits; returns ALL
+// violations (empty on success). The shared-memory budget comes from
+// `limits.lds_bytes_per_workgroup` (todo 10a switchover).
+Diagnostics verifyModule(const Module &module,
+                         const kernelh::DeviceLimits &limits);
+
+// Convenience overload: verifies against the default local device (gfx1101).
+// Defined inline so lib/ir itself never references device_limits_for; callers
+// that use this overload must link kernelh_compiler.
+inline Diagnostics verifyModule(const Module &module) {
+  return verifyModule(module, kernelh::device_limits_for("gfx1101"));
+}
 
 // True when the module has no error diagnostics.
-bool isModuleValid(const Module &module);
+inline bool isModuleValid(const Module &module) {
+  for (const Diagnostic &d : verifyModule(module)) {
+    if (d.severity == Diagnostic::Severity::Error) {
+      return false;
+    }
+  }
+  return true;
+}
 
 } // namespace kernelh::ir
 

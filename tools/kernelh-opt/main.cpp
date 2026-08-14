@@ -14,9 +14,12 @@
 //      --print-atom            print the module as ".atom" text to stdout
 //      --run-passes=<a,b,c>    run the pass pipeline in order
 //      --dump-dir <dir>        per-pass dumps: 00-input.atom, NN-<pass>.atom
+//      --atom-target <t>       device limits table target for verification
+//                              (gfx1101|sm_80; default gfx1101)
 //    Compose freely, e.g.:
 //      kernelh-opt --load-atom f.atom --run-passes=... --print-atom
 
+#include "kernelh/compiler/device_limits.hpp"
 #include "kernelh/ir/parser.hpp"
 #include "kernelh/ir/pass_manager.hpp"
 #include "kernelh/ir/printer.hpp"
@@ -30,6 +33,7 @@
 #include <fstream>
 #include <iostream>
 #include <sstream>
+#include <stdexcept>
 #include <string>
 #include <vector>
 
@@ -45,6 +49,7 @@ struct AtomOptions {
   std::string inputFile;
   std::string passPipeline;
   std::string dumpDir;
+  std::string atomTarget = "gfx1101";
 };
 
 enum class ScanResult { NoAtom, AtomMode, UsageError };
@@ -52,7 +57,8 @@ enum class ScanResult { NoAtom, AtomMode, UsageError };
 bool isAtomFlag(const std::string &arg) {
   return arg == "--load-atom" || arg == "--parse-atom" || arg == "--verify" ||
          arg == "--print-atom" || arg.rfind("--run-passes", 0) == 0 ||
-         arg.rfind("--dump-dir", 0) == 0;
+         arg.rfind("--dump-dir", 0) == 0 ||
+         arg.rfind("--atom-target", 0) == 0;
 }
 
 void printUsage() {
@@ -63,6 +69,8 @@ void printUsage() {
             << "  --print-atom           print the module as .atom text\n"
             << "  --run-passes=<a,b,c>   run the pass pipeline in order\n"
             << "  --dump-dir <dir>       per-pass dumps (needs --run-passes)\n"
+            << "  --atom-target <t>      device limits target for the verify\n"
+            << "                         pass (gfx1101|sm_80; default gfx1101)\n"
             << "Any other flag runs the normal mlir-opt mode.\n";
 }
 
@@ -126,6 +134,10 @@ ScanResult scanAtomOptions(int argc, char **argv, AtomOptions &options) {
         return ScanResult::UsageError;
       }
       options.hasDumpDir = true;
+    } else if (arg == "--atom-target" || arg.rfind("--atom-target=", 0) == 0) {
+      if (!takeValue(argc, argv, i, arg, "--atom-target", options.atomTarget)) {
+        return ScanResult::UsageError;
+      }
     } else if (arg == "--help") {
       std::cout << "kernelh-opt: MLIR optimizer driver for kernel.h\n";
       printUsage();
@@ -181,9 +193,19 @@ int runAtomMode(const AtomOptions &options) {
   }
   kernelh::ir::Module &module = *parsed;
 
-  // --load-atom implies structural verification; --verify forces it too.
+  // --load-atom implies structural verification; --verify forces it too. The
+  // shared-memory budget comes from the device-limits table for --atom-target
+  // (unknown target -> clean error from device_limits_for, exit 1).
   if (options.loadAtom || options.verify) {
-    const kernelh::ir::Diagnostics diags = kernelh::ir::verifyModule(module);
+    kernelh::DeviceLimits limits;
+    try {
+      limits = kernelh::device_limits_for(options.atomTarget.c_str());
+    } catch (const std::invalid_argument &e) {
+      std::cerr << "error: " << e.what() << "\n";
+      return 1;
+    }
+    const kernelh::ir::Diagnostics diags =
+        kernelh::ir::verifyModule(module, limits);
     bool failed = false;
     for (const kernelh::ir::Diagnostic &d : diags) {
       std::cerr << d.toString() << "\n";

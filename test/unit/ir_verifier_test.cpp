@@ -2,12 +2,16 @@
 //
 // Accept cases: every op kind, plus the corpus kernels. Reject cases: SSA
 // dominance violations, per-op type mismatches, barrier placement, shared
-// memory overflow (naming the 65536 limit), loop_for/yield consistency,
-// invalid kernel attributes, and i32 const overflow. verifyModule() must
-// report ALL violations, never early-exit.
+// memory overflow (naming the device's LDS limit from the DeviceLimits
+// table), loop_for/yield consistency, invalid kernel attributes, and i32
+// const overflow. verifyModule() must report ALL violations, never
+// early-exit. The shared-memory budget is device-dependent: the default
+// overload verifies against gfx1101 (65536 bytes); the explicit-limits
+// overload proves sm_80 (49152 bytes) rejects what gfx1101 accepts.
 
 #include "ir_corpus.hpp"
 
+#include "kernelh/compiler/device_limits.hpp"
 #include "kernelh/ir/module.hpp"
 #include "kernelh/ir/verifier.hpp"
 
@@ -24,7 +28,6 @@ using kernelh::ir::CmpPred;
 using kernelh::ir::Diagnostics;
 using kernelh::ir::IdDim;
 using kernelh::ir::Kernel;
-using kernelh::ir::kDefaultLdsLimitBytes;
 using kernelh::ir::MathKind;
 using kernelh::ir::MemSpace;
 using kernelh::ir::Module;
@@ -52,10 +55,11 @@ std::unique_ptr<Kernel> makeKernel(std::string name) {
   return std::make_unique<Kernel>(std::move(name));
 }
 
-// Errors only (warnings excluded) from a module.
-std::vector<std::string> errorMessages(const Module &module) {
+// Errors only (warnings excluded) from a module verified against `limits`.
+std::vector<std::string> errorMessages(const Module &module,
+                                       const kernelh::DeviceLimits &limits) {
   std::vector<std::string> messages;
-  for (const kernelh::ir::Diagnostic &d : verifyModule(module)) {
+  for (const kernelh::ir::Diagnostic &d : verifyModule(module, limits)) {
     if (d.severity == kernelh::ir::Diagnostic::Severity::Error) {
       messages.push_back(d.message);
     }
@@ -63,13 +67,23 @@ std::vector<std::string> errorMessages(const Module &module) {
   return messages;
 }
 
-bool hasMessage(const Module &module, const std::string &needle) {
-  for (const std::string &message : errorMessages(module)) {
+// Errors only under the default gfx1101 device limits.
+std::vector<std::string> errorMessages(const Module &module) {
+  return errorMessages(module, kernelh::device_limits_for("gfx1101"));
+}
+
+bool hasMessage(const Module &module, const std::string &needle,
+                const kernelh::DeviceLimits &limits) {
+  for (const std::string &message : errorMessages(module, limits)) {
     if (message.find(needle) != std::string::npos) {
       return true;
     }
   }
   return false;
+}
+
+bool hasMessage(const Module &module, const std::string &needle) {
+  return hasMessage(module, needle, kernelh::device_limits_for("gfx1101"));
 }
 
 Type f32() { return Type::scalar(ScalarType::F32); }
@@ -767,28 +781,29 @@ TEST_CASE("ir_verify_reject_shape_value_nonpositive", "[unit][ir]") {
 }
 
 // ===========================================================================
-// REJECT: shared memory overflow (names the 65536 limit)
+// REJECT: shared memory overflow (names the device's LDS limit from the
+// DeviceLimits table; default overload verifies against gfx1101 = 65536)
 // ===========================================================================
 
 TEST_CASE("ir_verify_reject_shared_overflow_names_limit", "[unit][ir]") {
   Module module;
   auto k = makeKernel("overflow");
   Block &b = k->body;
-  // 128x128 f32 = 65536 bytes alone exceeds the budget of 65536? No: exactly
-  // the limit is OK; two tiles blow past it.
+  // 128x128 f32 = 65536 bytes alone equals gfx1101's budget; two tiles
+  // (131072 bytes) blow past it.
   builder::makeAllocShared(b, TensorType{{128, 128}, ScalarType::F32, MemSpace::Shared});
   builder::makeAllocShared(b, TensorType{{128, 128}, ScalarType::F32, MemSpace::Shared});
   module.kernels.push_back(std::move(k));
   CHECK(hasMessage(module, "shared memory usage"));
-  CHECK(hasMessage(module, std::to_string(kDefaultLdsLimitBytes)));
   CHECK(hasMessage(module, "65536"));
+  CHECK(hasMessage(module, "gfx1101"));
 }
 
 TEST_CASE("ir_verify_accept_shared_exactly_at_limit", "[unit][ir]") {
   Module module;
   auto k = makeKernel("at_limit");
   Block &b = k->body;
-  // 128x128 f32 = 65536 bytes = exactly kDefaultLdsLimitBytes.
+  // 128x128 f32 = 65536 bytes = exactly gfx1101's LDS budget.
   builder::makeAllocShared(b, TensorType{{128, 128}, ScalarType::F32, MemSpace::Shared});
   module.kernels.push_back(std::move(k));
   REQUIRE(verifyModule(module).empty());
@@ -808,6 +823,45 @@ TEST_CASE("ir_verify_reject_shared_overflow_counts_loop_scopes", "[unit][ir]") {
   builder::makeYield(body, {});
   module.kernels.push_back(std::move(k));
   CHECK(hasMessage(module, "65536"));
+}
+
+// ===========================================================================
+// Device-limits switchover (todo 10a): the same kernel discriminates per
+// target - gfx1101's 65536-byte budget accepts 51200 bytes, sm_80's
+// 49152-byte budget rejects it.
+// ===========================================================================
+
+TEST_CASE("ir_verify_shared_51200_accept_gfx1101_reject_sm80", "[unit][ir]") {
+  const kernelh::DeviceLimits &gfx1101 = kernelh::device_limits_for("gfx1101");
+  const kernelh::DeviceLimits &sm80 = kernelh::device_limits_for("sm_80");
+  // Guard the discrimination itself: if the table values drift, this test
+  // fails loudly instead of silently passing with both targets agreeing.
+  REQUIRE(51200 <= gfx1101.lds_bytes_per_workgroup);
+  REQUIRE(51200 > sm80.lds_bytes_per_workgroup);
+  Module module;
+  auto k = makeKernel("shared_51200");
+  Block &b = k->body;
+  // 12800 f32 elements = 51200 bytes of static shared memory.
+  builder::makeAllocShared(b, TensorType{{12800}, ScalarType::F32, MemSpace::Shared});
+  module.kernels.push_back(std::move(k));
+  REQUIRE(verifyModule(module, gfx1101).empty());
+  CHECK_FALSE(verifyModule(module, sm80).empty());
+  CHECK(hasMessage(module, "51200", sm80));
+  CHECK(hasMessage(module, "49152", sm80));
+  CHECK(hasMessage(module, "sm_80", sm80));
+}
+
+TEST_CASE("ir_verify_shared_49152_accept_gfx1101", "[unit][ir]") {
+  // 12288 f32 elements = 49152 bytes (sm_80's exact budget) is still within
+  // gfx1101's larger 65536-byte budget.
+  const kernelh::DeviceLimits &gfx1101 = kernelh::device_limits_for("gfx1101");
+  REQUIRE(49152 <= gfx1101.lds_bytes_per_workgroup);
+  Module module;
+  auto k = makeKernel("shared_49152");
+  Block &b = k->body;
+  builder::makeAllocShared(b, TensorType{{12288}, ScalarType::F32, MemSpace::Shared});
+  module.kernels.push_back(std::move(k));
+  REQUIRE(verifyModule(module, gfx1101).empty());
 }
 
 // ===========================================================================

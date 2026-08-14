@@ -1,9 +1,11 @@
 // Structural verifier for the atom IR (plan todo 9).
 //
 // Returns ALL violations (never early-exits). See verifier.hpp for the rule
-// list. The LDS limit check is the SINGLE function verifyKernelSharedLimit
-// using kDefaultLdsLimitBytes - todo 10a swaps that constant for the
-// device-limits table lookup.
+// list. The LDS limit check is the SINGLE function verifyKernelSharedLimit,
+// which reads its budget from the caller-supplied
+// kernelh::DeviceLimits::lds_bytes_per_workgroup (todo 10a switchover: the
+// old placeholder LDS constant is gone). The verifier is
+// device-agnostic; lib/ir does not link kernelh_compiler.
 
 #include "kernelh/ir/verifier.hpp"
 
@@ -116,17 +118,20 @@ bool allSameType(const Op &op, size_t first, size_t count) {
 
 // ---------------------------------------------------------------------------
 // LDS limit check - THE single place the shared-memory budget is enforced.
-// todo 10a swaps kDefaultLdsLimitBytes for the device-limits table lookup
-// inside this one function.
+// The budget comes from the caller-supplied DeviceLimits
+// (lds_bytes_per_workgroup), so the check is device-agnostic (todo 10a
+// switchover from the placeholder LDS constant).
 // ---------------------------------------------------------------------------
-void verifyKernelSharedLimit(const Kernel &kernel, Diagnostics &diags) {
+void verifyKernelSharedLimit(const Kernel &kernel,
+                             const kernelh::DeviceLimits &limits,
+                             Diagnostics &diags) {
   const int64_t total = kernelTotalSharedBytes(kernel);
-  if (total > kDefaultLdsLimitBytes) {
+  const int64_t limit = limits.lds_bytes_per_workgroup;
+  if (total > limit) {
     addError(diags,
              "shared memory usage " + std::to_string(total) +
-                 " bytes exceeds the " +
-                 std::to_string(kDefaultLdsLimitBytes) +
-                 "-byte LDS limit (kDefaultLdsLimitBytes)");
+                 " bytes exceeds the " + std::to_string(limit) +
+                 "-byte LDS limit for target '" + limits.name + "'");
   }
 }
 
@@ -684,16 +689,8 @@ void verifyBlock(const Block &block, const ScopeInfo &info,
 // Public API
 // ---------------------------------------------------------------------------
 
-bool isModuleValid(const Module &module) {
-  for (const Diagnostic &d : verifyModule(module)) {
-    if (d.severity == Diagnostic::Severity::Error) {
-      return false;
-    }
-  }
-  return true;
-}
-
-Diagnostics verifyModule(const Module &module) {
+Diagnostics verifyModule(const Module &module,
+                          const kernelh::DeviceLimits &limits) {
   Diagnostics diags;
   ScopeInfo info;
   for (const auto &kernel : module.kernels) {
@@ -701,7 +698,7 @@ Diagnostics verifyModule(const Module &module) {
   }
   for (const auto &kernel : module.kernels) {
     verifyKernelAttrs(*kernel, diags);
-    verifyKernelSharedLimit(*kernel, diags);
+    verifyKernelSharedLimit(*kernel, limits, diags);
     verifyBlock(kernel->body, info, diags);
   }
   return diags;
