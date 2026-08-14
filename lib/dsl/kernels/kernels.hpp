@@ -24,6 +24,9 @@ void ensureBuiltinKernels();
 // register* functions wired in there.
 void registerVecaddKernel();
 
+// Registers the gemm template (lib/dsl/kernels/gemm.cpp, plan todo 26).
+void registerGemmKernel();
+
 } // namespace kernelh::detail
 
 #endif // KERNELH_DSL_INTERNAL_HPP

@@ -27,6 +27,7 @@ void ensureBuiltinKernels() {
   }
   done = true;
   registerVecaddKernel();
+  registerGemmKernel();
 }
 
 } // namespace detail
