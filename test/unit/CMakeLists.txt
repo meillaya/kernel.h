@@ -26,6 +26,7 @@ add_executable(kernelh_unit
   launch_verifier_test.cpp
   emitter_test.cpp
   backend_test.cpp
+  resource_reporter_test.cpp
   canary_gpu_test.cpp
   e2e_vecadd_test.cpp
   e2e_gemm_test.cpp

@@ -36,6 +36,7 @@
 #include "kernelh/compiler/backends.hpp"
 #include "kernelh/compiler/device_limits.hpp"
 #include "kernelh/compiler/emitter.hpp"
+#include "kernelh/compiler/resource_reporter.hpp"
 #include "kernelh/Dialect/Atom/IR/AtomDialect.h"
 #include "kernelh/dsl/program.hpp"
 #include "kernelh/ir/parser.hpp"
@@ -99,6 +100,10 @@ void printUsage(std::ostream &os) {
       << "  --passes-no-fuse      pipeline override: run the default pipeline\n"
       << "                        WITHOUT the fuse pass (proves fusion fired\n"
       << "                        via the loop-nest-count differential)\n"
+      << "  --resources           (todo 33) write resources.json next to the\n"
+      << "                        artifacts with per-kernel resource usage\n"
+      << "                        (vgpr/sgpr/lds/wavefront/occupancy); the\n"
+      << "                        contract consumed by the autotuner\n"
       << "\n"
      << "explore, bench, tune: not implemented yet (plan todos 37/35/34); they\n"
      << "exit 2 and ignore any arguments after a warning.\n"
@@ -161,6 +166,7 @@ struct CompileOptions {
   bool hasOut = false;
   bool hasDumpDir = false;
   bool passesNoFuse = false;
+  bool resources = false;
   std::string inputFile;
   std::string kernelName;
   kernelh::ShapeMap shape;
@@ -218,6 +224,8 @@ bool scanCompileArgs(int argc, char **argv, CompileOptions &options) {
       options.hasDumpDir = true;
     } else if (arg == "--passes-no-fuse") {
       options.passesNoFuse = true;
+    } else if (arg == "--resources") {
+      options.resources = true;
     } else {
       std::cerr << "error: unknown flag '" << arg << "' for compile\n";
       return false;
@@ -507,6 +515,24 @@ int runCompile(const CompileOptions &options) {
         return kExitOperational;
       }
       std::cout << "wrote " << hsacoFile.string() << "\n";
+    }
+  }
+  // 7. Resource reporter (plan todo 33, flag ownership pinned here): with
+  //    --resources, invoke the reporter for EVERY --target and write
+  //    resources.json next to the artifacts. The reporter follows the pinned
+  //    source priority (rocprofv3 when available, else the amdhsa notes /
+  //    ptxas -v static parsing); a truncated/corrupt code object fails the
+  //    compile cleanly.
+  if (options.resources) {
+    for (const std::string &target : options.targets) {
+      auto resources =
+          kernelh::compiler::resource_report(outName, target, outDir);
+      if (!resources) {
+        std::cerr << "error: " << resources.error() << "\n";
+        return kExitOperational;
+      }
+      std::cout << "wrote " << (outDir / "resources.json").string() << " ("
+                << target << ")\n";
     }
   }
   std::cout << "compile ok\n";

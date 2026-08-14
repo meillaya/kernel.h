@@ -1,0 +1,152 @@
+
+File: /tmp/r33/gemm.hsaco
+Format: elf64-amdgpu
+Arch: amdgcn
+AddressSize: 64bit
+LoadName: <Not found>
+NoteSections [
+  NoteSection {
+    Name: .note
+    Offset: 0x200
+    Size: 0x804
+    Notes [
+      {
+        Owner: AMDGPU
+        Data size: 0x7EE
+        Type: NT_AMDGPU_METADATA (AMDGPU Metadata)
+        AMDGPU Metadata: ---
+amdhsa.kernels:
+  - .args:
+      - .address_space:  generic
+        .offset:         0
+        .size:           8
+        .value_kind:     global_buffer
+      - .address_space:  generic
+        .offset:         8
+        .size:           8
+        .value_kind:     global_buffer
+      - .offset:         16
+        .size:           8
+        .value_kind:     by_value
+      - .offset:         24
+        .size:           8
+        .value_kind:     by_value
+      - .offset:         32
+        .size:           8
+        .value_kind:     by_value
+      - .offset:         40
+        .size:           8
+        .value_kind:     by_value
+      - .offset:         48
+        .size:           8
+        .value_kind:     by_value
+      - .address_space:  generic
+        .offset:         56
+        .size:           8
+        .value_kind:     global_buffer
+      - .address_space:  generic
+        .offset:         64
+        .size:           8
+        .value_kind:     global_buffer
+      - .offset:         72
+        .size:           8
+        .value_kind:     by_value
+      - .offset:         80
+        .size:           8
+        .value_kind:     by_value
+      - .offset:         88
+        .size:           8
+        .value_kind:     by_value
+      - .offset:         96
+        .size:           8
+        .value_kind:     by_value
+      - .offset:         104
+        .size:           8
+        .value_kind:     by_value
+      - .address_space:  generic
+        .offset:         112
+        .size:           8
+        .value_kind:     global_buffer
+      - .address_space:  generic
+        .offset:         120
+        .size:           8
+        .value_kind:     global_buffer
+      - .offset:         128
+        .size:           8
+        .value_kind:     by_value
+      - .offset:         136
+        .size:           8
+        .value_kind:     by_value
+      - .offset:         144
+        .size:           8
+        .value_kind:     by_value
+      - .offset:         152
+        .size:           8
+        .value_kind:     by_value
+      - .offset:         160
+        .size:           8
+        .value_kind:     by_value
+      - .offset:         168
+        .size:           4
+        .value_kind:     hidden_block_count_x
+      - .offset:         172
+        .size:           4
+        .value_kind:     hidden_block_count_y
+      - .offset:         176
+        .size:           4
+        .value_kind:     hidden_block_count_z
+      - .offset:         180
+        .size:           2
+        .value_kind:     hidden_group_size_x
+      - .offset:         182
+        .size:           2
+        .value_kind:     hidden_group_size_y
+      - .offset:         184
+        .size:           2
+        .value_kind:     hidden_group_size_z
+      - .offset:         186
+        .size:           2
+        .value_kind:     hidden_remainder_x
+      - .offset:         188
+        .size:           2
+        .value_kind:     hidden_remainder_y
+      - .offset:         190
+        .size:           2
+        .value_kind:     hidden_remainder_z
+      - .offset:         208
+        .size:           8
+        .value_kind:     hidden_global_offset_x
+      - .offset:         216
+        .size:           8
+        .value_kind:     hidden_global_offset_y
+      - .offset:         224
+        .size:           8
+        .value_kind:     hidden_global_offset_z
+      - .offset:         232
+        .size:           2
+        .value_kind:     hidden_grid_dims
+    .group_segment_fixed_size: 0
+    .kernarg_segment_align: 8
+    .kernarg_segment_size: 424
+    .max_flat_workgroup_size: 256
+    .name:           gemm
+    .private_segment_fixed_size: 0
+    .sgpr_count:     34
+    .sgpr_spill_count: 0
+    .symbol:         gemm.kd
+    .uniform_work_group_size: 1
+    .uses_dynamic_stack: false
+    .vgpr_count:     19
+    .vgpr_spill_count: 0
+    .wavefront_size: 32
+    .workgroup_processor_mode: 1
+amdhsa.target:   amdgcn-amd-amdhsa--gfx1101
+amdhsa.version:
+  - 1
+  - 2
+...
+
+      }
+    ]
+  }
+]

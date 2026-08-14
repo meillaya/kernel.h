@@ -1,0 +1,6 @@
+ptxas info    : 0 bytes gmem
+ptxas info    : Compiling entry function '_Z11smem_kernelPf' for 'sm_80'
+ptxas info    : Function properties for _Z11smem_kernelPf
+    0 bytes stack frame, 0 bytes spill stores, 0 bytes spill loads
+ptxas info    : Used 8 registers, used 0 barriers, 16384 bytes smem, 360 bytes cmem[0]
+ptxas info    : Compile time = 1.117 ms
