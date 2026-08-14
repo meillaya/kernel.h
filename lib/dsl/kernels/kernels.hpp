@@ -26,6 +26,10 @@ void registerVecaddKernel();
 
 // Registers the gemm template (lib/dsl/kernels/gemm.cpp, plan todo 26).
 void registerGemmKernel();
+// Registers the layernorm template (lib/dsl/kernels/layernorm.cpp), plan
+// todo 28: two-pass row normalization over the last dim with iter_args
+// reductions. Called by ensureBuiltinKernels.
+void registerLayernormKernel();
 
 } // namespace kernelh::detail
 

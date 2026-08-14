@@ -7,6 +7,7 @@ add_library(kernelh_dsl STATIC
   registry.cpp
   kernels/vecadd.cpp
   kernels/gemm.cpp
+  kernels/layernorm.cpp
 )
 
 target_link_libraries(kernelh_dsl PUBLIC kernelh_ir)
