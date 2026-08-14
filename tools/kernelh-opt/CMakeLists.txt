@@ -37,6 +37,9 @@ target_link_libraries(kernelh-opt PRIVATE
   $<LINK_LIBRARY:WHOLE_ARCHIVE,kernelh_passes>
   kernelh_ir
   kernelh_compiler
+  # The atom MLIR dialect (plan todo 20). main.cpp calls
+  # kernelh::atom::registerAtomDialect directly, so a plain link is enough.
+  kernelh_atom_mlir
   ${KERNELH_MLIR_STATIC_LIBS}
   LLVM
 )

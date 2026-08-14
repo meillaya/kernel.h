@@ -21,6 +21,14 @@ include(HandleLLVMOptions)
 # add_mlir_tool marks tools EXCLUDE_FROM_ALL and `cmake --build` skips them.
 set(LLVM_BUILD_TOOLS ON)
 
+# Include trees shared by all targets: the kernel.h MLIR dialect sources,
+# their TableGen outputs under <build>/mlir/include, and the MLIR/LLVM
+# headers (the mlir_tblgen runs in mlir/include/... also pick these up via
+# the INCLUDE_DIRECTORIES directory property).
+include_directories(${CMAKE_SOURCE_DIR}/mlir/include)
+include_directories(${CMAKE_BINARY_DIR}/mlir/include)
+include_directories(${MLIR_INCLUDE_DIRS} ${LLVM_INCLUDE_DIRS})
+
 enable_testing()
 find_package(Catch2 3 REQUIRED)
 

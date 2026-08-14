@@ -21,6 +21,7 @@
 //      kernelh-opt --load-atom f.atom --run-passes=... --print-atom
 
 #include "kernelh/compiler/device_limits.hpp"
+#include "kernelh/Dialect/Atom/IR/AtomDialect.h"
 #include "kernelh/ir/parser.hpp"
 #include "kernelh/ir/pass_manager.hpp"
 #include "kernelh/ir/printer.hpp"
@@ -278,6 +279,9 @@ int main(int argc, char **argv) {
   mlir::registerAllDialects(registry);
   mlir::registerAllExtensions(registry);
   mlir::registerAllPasses();
+  // The "atom" MLIR dialect (plan todo 20): the bridge between the custom
+  // atom IR and the GPU dialect.
+  mlir::kernelh::atom::registerAtomDialect(registry);
   return mlir::asMainReturnCode(mlir::MlirOptMain(
       argc, argv, "kernelh-opt: MLIR optimizer driver for kernel.h", registry));
 }
