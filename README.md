@@ -199,14 +199,10 @@ are gitignored, so these links resolve after you run them.
 - **[Charts](build/bench/charts/)** — [roofline.png](build/bench/charts/roofline.png), [gemm_gflops_vs_size.png](build/bench/charts/gemm_gflops_vs_size.png), [elementwise_bw.png](build/bench/charts/elementwise_bw.png), [attention_gflops.png](build/bench/charts/attention_gflops.png) + [charts_stats.csv](build/bench/charts/charts_stats.csv).
 - **[Technical report](docs/report.pdf)** — LaTeX build of [docs/REPORT.md](docs/REPORT.md): IR design, pass pipeline, MLIR lowering, backends, runtime, autotuning, performance, limitations.
 
-## License
-
-MIT — see [LICENSE](LICENSE). Copyright (c) 2026 mei.
-
 **CUDA-unfree note:** the devenv environment accepts unfree packages
 (`nixpkgs.allow_unfree = true` in `devenv.yaml`) because the CUDA 12.9 toolchain
 (`cuda_nvcc`, `cuda_cudart`, `libcublas`, CUTLASS headers) is required for the
-NVIDIA cross path. The CUDA license was accepted at the environment gate. The
+NVIDIA cross path. The CUDA EULA was accepted at the environment gate. The
 cuBLAS/CUTLASS benchmark harness additionally needs an NVIDIA GPU + driver to
 run; on this box those rows skip with exit 77 (no CUDA driver — the NVIDIA path
 is verified on rented RTX 6000 Ada hardware).
