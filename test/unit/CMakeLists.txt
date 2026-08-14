@@ -27,6 +27,7 @@ add_executable(kernelh_unit
   emitter_test.cpp
   backend_test.cpp
   resource_reporter_test.cpp
+  autotuner_test.cpp
   canary_gpu_test.cpp
   e2e_vecadd_test.cpp
   e2e_gemm_test.cpp

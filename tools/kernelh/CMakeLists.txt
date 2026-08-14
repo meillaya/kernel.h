@@ -30,4 +30,8 @@ target_link_libraries(kernelh PRIVATE
   # naming the ~40 MLIR targets by hand.
   kernelh_emitter
   kernelh_backends
+  # The todo-23 runtime (launch + EventTimer) powers `kernelh tune` (todo 34).
+  # WHOLE_ARCHIVE so the strong query_cu_count_runtime() /
+  # query_occupancy_max_blocks_runtime() overrides win over the weak defaults.
+  $<LINK_LIBRARY:WHOLE_ARCHIVE,kernelh_runtime>
 )

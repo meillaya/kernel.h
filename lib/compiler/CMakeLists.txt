@@ -10,7 +10,12 @@
 # kernelh::query_cu_count_runtime() (see
 # include/kernelh/compiler/device_limits.hpp for the contract); plan todo 23's
 # runtime library provides the strong override.
-add_library(kernelh_compiler STATIC device_limits.cpp launch_verifier.cpp resource_reporter.cpp)
+add_library(kernelh_compiler STATIC
+  device_limits.cpp
+  launch_verifier.cpp
+  resource_reporter.cpp
+  autotuner.cpp
+)
 
 # Header search: repo-root include/ (kernelh/compiler/device_limits.hpp).
 target_include_directories(kernelh_compiler PUBLIC "${CMAKE_SOURCE_DIR}/include")
