@@ -1,0 +1,45 @@
+// Tiled GEMM-shaped fixture for the promote-shared pass (plan todo 16).
+//
+// This is the SERIAL TILE SKELETON the tile pass consumes (the contract in
+// lib/passes/tiling.cpp): a GEMM C[i][j] = sum_k A[i][k]*B[k][j] whose
+// outermost loop (the DOMAIN LOOP over M) has the pinned shape
+// loop_for 0 to E step 1, with tile = [64, 64, 32], map_blocks and
+// map_warps set. The problem is ONE TILE (M = 64 = BM, N = 64 = BN, K = 32 =
+// BK) and the global tensors ARE the tiles (A: 64x32, B: 32x64, C: 64x64), so
+// after the tile pass the staged tensors are tile-shaped and promotion fires
+// the whole-tile atom.copy global->shared path (atom.copy requires identical
+// operand shapes).
+//
+// The lit RUN runs the pinned pipeline tile,promote-shared on this file
+// (test/lit/passes/promote_shared.test).
+
+atom.kernel @promote_gemm(%v0: tensor<64x32xf32, global>, %v1: tensor<32x64xf32, global>, %v2: tensor<64x64xf32, global>) {
+  tile = [64, 64, 32]
+  map_blocks = true
+  map_warps = true
+  use_shared_memory = true
+  vector_width = 1
+  unroll = 1
+  shape = {k = 32, m = 64, n = 64}
+  %v3 = atom.const 0 : index
+  %v4 = atom.const 64 : index
+  %v5 = atom.const 1 : index
+  %v6 = atom.const 32 : index
+  atom.loop_for %v3 to %v4 step %v5 iter_args() -> () {
+    ^bb0(%v7: index):
+      %v8 = atom.const 0.0 : f32
+      atom.loop_for %v3 to %v4 step %v5 iter_args() -> () {
+        ^bb0(%v9: index):
+          %v10 = atom.loop_for %v3 to %v6 step %v5 iter_args(%v8) -> (f32) {
+            ^bb0(%v11: index, %v12: f32):
+              %v13 = atom.load %v0[%v7, %v11] : tensor<64x32xf32, global>
+              %v14 = atom.load %v1[%v11, %v9] : tensor<32x64xf32, global>
+              %v15 = atom.fma %v13, %v14, %v12 : f32
+              atom.yield %v15 : f32
+          }
+          atom.store %v10, %v2[%v7, %v9] : tensor<64x64xf32, global>
+          atom.yield
+      }
+      atom.yield
+  }
+}

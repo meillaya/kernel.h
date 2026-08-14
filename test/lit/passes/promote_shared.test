@@ -1,0 +1,50 @@
+// Shared-memory promotion lit tests (plan todo 16).
+//
+// The promote_shared.atom fixture is a tiled GEMM-shaped kernel (tile =
+// [64, 64, 32], map_blocks/map_warps, use_shared_memory = true) run through
+// the pinned pipeline (tile,promote-shared). FileCheck asserts, in ORDER
+// (the CHECK sequence is the barrier-placement proof):
+//   1. the static tile-sized atom.alloc_shared buffers (64x32 = BM x BK,
+//      32x64 = BK x BN, x f32 = 4 B/elem),
+//   2. the atom.copy global->shared store stage,
+//   3. the first atom.barrier AFTER the shared stores and BEFORE the first
+//      shared load (pinned rule G20),
+//   4. the shared loads replacing the global loads in the compute,
+//   5. the second atom.barrier at the END of the tile iteration,
+//   6. no global loads of the staged tensors anywhere (whole-file grep).
+
+// RUN: kernelh-opt --load-atom %S/../../fixtures/passes/promote_shared.atom --run-passes=tile,promote-shared --print-atom > %t.promoted.out
+// RUN: FileCheck %s --check-prefix=PROMOTED < %t.promoted.out
+// RUN: not grep -E 'atom\.load [^:]*: tensor<(64x32|32x64)xf32, global>' %t.promoted.out
+
+// The overflow fixture's tile config needs 131072 B of static shared (256x64
+// + 64x256 f32 tiles) - beyond the 65536-byte gfx1101 LDS budget. The pass
+// must fail cleanly with a std::expected error naming the tile config
+// (non-zero exit, diagnostic on stderr - no crash, module untouched).
+// RUN: not kernelh-opt --load-atom %S/../../fixtures/passes/shmem_overflow.atom --run-passes=tile,promote-shared --print-atom 2>&1 | FileCheck %s --check-prefix=OVERFLOW
+
+// PROMOTED-LABEL: atom.kernel @promote_gemm(
+// PROMOTED: tile = [64, 64, 32]
+// PROMOTED: use_shared_memory = true
+// PROMOTED: atom.loop_for
+// PROMOTED: atom.alloc_shared : tensor<64x32xf32, shared>
+// PROMOTED: atom.alloc_shared : tensor<32x64xf32, shared>
+// PROMOTED: atom.copy %{{[^ ]*}}, %{{[^ ]*}} : tensor<64x32xf32, global> to tensor<64x32xf32, shared>
+// PROMOTED: atom.copy %{{[^ ]*}}, %{{[^ ]*}} : tensor<32x64xf32, global> to tensor<32x64xf32, shared>
+// PROMOTED: atom.barrier
+// PROMOTED: atom.load %{{[^ ]*}}[%{{[^ ]*}}, %{{[^ ]*}}] : tensor<64x32xf32, shared>
+// PROMOTED: atom.load %{{[^ ]*}}[%{{[^ ]*}}, %{{[^ ]*}}] : tensor<32x64xf32, shared>
+// PROMOTED: atom.fma
+// The K-loop's yield closes the compute; the C store follows it inside the
+// N-loop.
+// PROMOTED: atom.yield
+// PROMOTED: atom.store
+// PROMOTED: atom.yield
+// The SECOND barrier ends the tile iteration (before the next iteration's
+// stores overwrite shared - pinned rule G20), then the tile loop yields.
+// PROMOTED: atom.barrier
+// PROMOTED: atom.yield
+
+// OVERFLOW: error: shared memory usage 131072 bytes for tile config [256, 256, 64]
+// OVERFLOW: exceeds the 65536-byte LDS limit
+// OVERFLOW: gfx1101

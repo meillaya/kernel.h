@@ -1,0 +1,40 @@
+// Overflow fixture for the promote-shared pass (plan todo 16): the same
+// serial GEMM tile skeleton as promote_shared.atom but with a tile config
+// whose staged shared memory exceeds the gfx1101 LDS budget.
+//
+// tile = [256, 256, 64]: A tile = 256x64xf32 = 65536 B, B tile = 64x256xf32
+// = 65536 B -> total 131072 B > 65536 B (the device table's
+// lds_bytes_per_workgroup, read via kernelh::device_limits_for, never
+// hardcoded). The pass must reject this with a std::expected error naming the
+// tile config - the module stays untouched (feeds the verifier/autotuner).
+
+atom.kernel @shmem_overflow(%v0: tensor<256x64xf32, global>, %v1: tensor<64x256xf32, global>, %v2: tensor<256x256xf32, global>) {
+  tile = [256, 256, 64]
+  map_blocks = true
+  map_warps = true
+  use_shared_memory = true
+  vector_width = 1
+  unroll = 1
+  shape = {k = 64, m = 256, n = 256}
+  %v3 = atom.const 0 : index
+  %v4 = atom.const 256 : index
+  %v5 = atom.const 1 : index
+  %v6 = atom.const 64 : index
+  atom.loop_for %v3 to %v4 step %v5 iter_args() -> () {
+    ^bb0(%v7: index):
+      %v8 = atom.const 0.0 : f32
+      atom.loop_for %v3 to %v4 step %v5 iter_args() -> () {
+        ^bb0(%v9: index):
+          %v10 = atom.loop_for %v3 to %v6 step %v5 iter_args(%v8) -> (f32) {
+            ^bb0(%v11: index, %v12: f32):
+              %v13 = atom.load %v0[%v7, %v11] : tensor<256x64xf32, global>
+              %v14 = atom.load %v1[%v11, %v9] : tensor<64x256xf32, global>
+              %v15 = atom.fma %v13, %v14, %v12 : f32
+              atom.yield %v15 : f32
+          }
+          atom.store %v10, %v2[%v7, %v9] : tensor<256x256xf32, global>
+          atom.yield
+      }
+      atom.yield
+  }
+}
