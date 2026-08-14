@@ -1,6 +1,30 @@
 { pkgs, config, lib, ... }:
 let
   llvm = pkgs.llvmPackages_21;
+
+  # Toolkit-root linkFarms for MLIR gpu-module-to-binary (plan todo 3).
+  # ROCDL serializer hard-requires: <toolkit>/llvm/bin/ld.lld + <toolkit>/amdgcn/bitcode/*.bc
+  # NVVM cubin path wants:          <toolkit>/bin/ptxas + <toolkit>/nvvm/libdevice/libdevice.10.bc
+  rocmDeviceLibs = pkgs.rocmPackages.rocm-device-libs;
+  # Verified layout (todo 3 discovery): $out/amdgcn/bitcode/*.bc (ocml, ockl, hip,
+  # opencl + oclc_* controls). Enumerate every regular *.bc deterministically.
+  # NOTE: builtins.readDir needs the store path present at eval time - guaranteed
+  # here by the packages list below + devenv.lock pin (materialized in todo 2).
+  deviceLibBcs = lib.attrNames (lib.filterAttrs
+    (name: type: type == "regular" && lib.hasSuffix ".bc" name)
+    (builtins.readDir "${rocmDeviceLibs}/amdgcn/bitcode"));
+  rocmToolkitRoot = pkgs.linkFarm "rocm-toolkit-root" ([
+    # rocmPackages.llvm is a package SET; .lld is the derivation (todo 2 finding)
+    { name = "llvm/bin/ld.lld"; path = "${pkgs.rocmPackages.llvm.lld}/bin/ld.lld"; }
+  ] ++ map (bc: {
+    name = "amdgcn/bitcode/${bc}";
+    path = "${rocmDeviceLibs}/amdgcn/bitcode/${bc}";
+  }) deviceLibBcs);
+  cudaToolkitRoot = pkgs.linkFarm "cuda-toolkit-root" [
+    { name = "bin/ptxas"; path = "${pkgs.cudaPackages_12_9.cuda_nvcc}/bin/ptxas"; }
+    # libdevice lives inside cuda_nvcc (no separate package); exact name verified
+    { name = "nvvm/libdevice/libdevice.10.bc"; path = "${pkgs.cudaPackages_12_9.cuda_nvcc}/nvvm/libdevice/libdevice.10.bc"; }
+  ];
 in
 {
   packages = with pkgs; [
@@ -23,6 +47,8 @@ in
     LLVM_DIR = "${llvm.llvm.dev}/lib/cmake/llvm";
     MLIR_TABLEGEN_EXE = "${llvm.tblgen}/bin/mlir-tblgen";
     KERNELH_DEGRADED_FLAG = "${config.env.KERNELH_ROOT}/.omo/evidence/degraded.flag";
+    ROCM_TOOLKIT_ROOT = builtins.toString rocmToolkitRoot;
+    CUDA_TOOLKIT_ROOT = builtins.toString cudaToolkitRoot;
   };
 
   scripts.build.exec = "cmake -G Ninja -B build -S . -DCMAKE_C_COMPILER=$(dirname $(which clang))/clang -DCMAKE_CXX_COMPILER=$(dirname $(which clang++))/clang++ -DCMAKE_CXX_STANDARD=23 -DMLIR_DIR=$MLIR_DIR -DLLVM_DIR=$LLVM_DIR -DMLIR_TABLEGEN_EXE=$MLIR_TABLEGEN_EXE && cmake --build build -j$(nproc)";
