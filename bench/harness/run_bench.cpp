@@ -108,6 +108,25 @@ int run_bench(const BenchFlags &flags) {
     return run_cuda_cross(flags);
   }
 
+  // Plan todo 36 occupancy-only mode: `bench --occupancy --kernel <name>
+  // --target <t> [--shape ...] [--threads N] --out <dir>` produces
+  // occupancy.{json,md} for the ONE kernel+config without timing anything. No
+  // device is required (the analytic occupancy always works; measured degrades
+  // to a note); the --kernel/--target validation happened in scanBenchArgs.
+  if (flags.occupancy && !flags.kernel.empty()) {
+    std::string error;
+    const int rc = kernelh::bench::write_occupancy_for_kernel(
+        flags.kernel, flags.target, flags.shape, flags.threads, flags.out,
+        error);
+    if (rc != 0) {
+      std::cerr << "error: " << error << "\n";
+      return rc;
+    }
+    std::cout << "wrote " << flags.out << "/occupancy.json + occupancy.md ("
+              << flags.kernel << ", " << flags.target << ")\n";
+    return 0;
+  }
+
   const std::vector<RowSpec> rows = suite_rows(flags.suite);
   if (rows.empty()) {
     std::cerr << "error: unknown suite '" << flags.suite
@@ -162,6 +181,33 @@ int run_bench(const BenchFlags &flags) {
     return 1;
   }
   std::cout << "wrote " << csvPath << " (" << results.size() << " rows)\n";
+
+  // Plan todo 36 suite hook: with --occupancy, generate occupancy.{json,md}
+  // for every kernelh-backend row (the per-kernel+config report; analytic +
+  // measured via the live device).
+  if (flags.occupancy) {
+    std::vector<RowSpec> kernelhRows;
+    for (const RowSpec &spec : rows) {
+      if (spec.backend == "kernelh") {
+        kernelhRows.push_back(spec);
+      }
+    }
+    std::string occDir = flags.out;
+    if (occDir.size() >= 4 &&
+        occDir.compare(occDir.size() - 4, 4, ".csv") == 0) {
+      const std::filesystem::path p(occDir);
+      occDir = p.parent_path().empty() ? "." : p.parent_path().string();
+    }
+    std::string error;
+    const int occRc = write_occupancy_for_rows(kernelhRows, backend, occDir,
+                                               error);
+    if (occRc != 0) {
+      std::cerr << "error: " << error << "\n";
+      return occRc;
+    }
+    std::cout << "wrote " << occDir << "/occupancy.json + occupancy.md ("
+              << kernelhRows.size() << " kernelh row(s))\n";
+  }
   return failed ? 1 : 0;
 }
 

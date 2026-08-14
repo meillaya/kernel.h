@@ -8,11 +8,14 @@
 #include "kernelh/compiler/backends.hpp"
 #include "kernelh/compiler/device_limits.hpp"
 #include "kernelh/compiler/emitter.hpp"
+#include "kernelh/compiler/occupancy.hpp"
+#include "kernelh/compiler/resource_reporter.hpp"
 #include "kernelh/Dialect/Atom/IR/AtomDialect.h"
 #include "kernelh/dsl/program.hpp"
 #include "kernelh/ir/verifier.hpp"
 #include "kernelh/passes/pipeline.hpp"
 #include "kernelh/runtime/buffer.hpp"
+#include "kernelh/runtime/device_context.hpp"
 #include "kernelh/runtime/gpu_module.hpp"
 #include "kernelh/runtime/kernel_launch.hpp"
 
@@ -26,6 +29,9 @@
 #include "mlir/IR/DialectRegistry.h"
 #include "mlir/IR/MLIRContext.h"
 
+#include <algorithm>
+#include <filesystem>
+#include <fstream>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -48,14 +54,28 @@ void registerCompileDialects(mlir::MLIRContext &ctx) {
   ctx.loadAllAvailableDialects();
 }
 
-// In-process compile of one DSL kernel for its default gfx1101 schedule.
+// In-process compile of one DSL kernel for the given CLI --target token.
 struct CompiledKernel {
-  std::vector<char> hsaco;
+  std::vector<char> hsaco; // amdgcn blob (empty for nvptx targets)
+  std::string ptx;         // nvptx text (empty for amdgcn targets)
   std::string error;
 };
 
-CompiledKernel compileKernel(const std::string &name,
-                             const std::string &shapeText) {
+// device-limits token for a CLI --target token ("amdgcn-gfx1101" -> "gfx1101",
+// "nvptx-sm_80" -> "sm_80"); bare tokens pass through.
+std::string device_token(const std::string &target) {
+  if (target == "amdgcn-gfx1101") {
+    return "gfx1101";
+  }
+  if (target == "nvptx-sm_80") {
+    return "sm_80";
+  }
+  return target;
+}
+
+CompiledKernel compileKernelFor(const std::string &name,
+                                const std::string &shapeText,
+                                const std::string &target) {
   CompiledKernel out;
   const ShapeMap shape = parse_shape_text(shapeText);
   if (shape.empty()) {
@@ -74,7 +94,7 @@ CompiledKernel compileKernel(const std::string &name,
   }
   kernelh::DeviceLimits limits;
   try {
-    limits = kernelh::device_limits_for("gfx1101");
+    limits = kernelh::device_limits_for(device_token(target).c_str());
   } catch (const std::invalid_argument &e) {
     out.error = e.what();
     return out;
@@ -98,18 +118,32 @@ CompiledKernel compileKernel(const std::string &name,
     out.error = gpu.error();
     return out;
   }
-  auto spec = kernelh::compiler::parseTargetSpec("amdgcn-gfx1101");
+  auto spec = kernelh::compiler::parseTargetSpec(target);
   if (!spec) {
     out.error = spec.error();
     return out;
   }
-  auto hsaco = kernelh::compiler::compileToBlob(*gpu, *spec, "hsaco");
-  if (!hsaco) {
-    out.error = hsaco.error();
-    return out;
+  if (spec->isNVPTX()) {
+    auto ptx = kernelh::compiler::compileToText(*gpu, *spec, "ptx");
+    if (!ptx) {
+      out.error = ptx.error();
+      return out;
+    }
+    out.ptx = std::move(*ptx);
+  } else {
+    auto hsaco = kernelh::compiler::compileToBlob(*gpu, *spec, "hsaco");
+    if (!hsaco) {
+      out.error = hsaco.error();
+      return out;
+    }
+    out.hsaco = std::move(*hsaco);
   }
-  out.hsaco = std::move(*hsaco);
   return out;
+}
+
+CompiledKernel compileKernel(const std::string &name,
+                             const std::string &shapeText) {
+  return compileKernelFor(name, shapeText, "amdgcn-gfx1101");
 }
 
 struct LoadedKernel {
@@ -401,6 +435,150 @@ std::optional<BenchRow> runAttention(const RowSpec &spec,
                  gflops_from_ms(attention_flops(batch, heads, seq, headDim), ms));
 }
 
+// ---------------------------------------------------------------------------
+// Plan todo 36 occupancy generation (consumed by `kernelh bench --occupancy`).
+// ---------------------------------------------------------------------------
+
+// Per-kernel default shapes for the occupancy-only mode: the DSL templates
+// REQUIRE shape keys, and the todo-36 acceptance `bench --occupancy --kernel
+// gemm --target amdgcn-gfx1101` passes none, so these defaults kick in. The
+// occupancy does not depend strongly on the shape (the default schedule's
+// resources are what matter), and the config text is echoed into the report.
+std::string default_shape_for(const std::string &kernel) {
+  if (kernel == "gemm") {
+    return "m=512,n=512,k=512";
+  }
+  if (kernel == "softmax") {
+    return "rows=4096,cols=1024";
+  }
+  if (kernel == "layernorm") {
+    return "rows=4096,cols=1024";
+  }
+  if (kernel == "scan") {
+    return "n=100000";
+  }
+  if (kernel == "fused_gelu") {
+    return "n=1048576";
+  }
+  if (kernel == "attention") {
+    return "batch=2,heads=8,seq=512,head_dim=64";
+  }
+  if (kernel == "vecadd") {
+    return "n=1024";
+  }
+  return "";
+}
+
+// Default launch workgroup size for the occupancy-only mode (mirrors the
+// todo-35 launch configs in the run* functions).
+int default_threads_for(const std::string &kernel) {
+  if (kernel == "attention") {
+    return 64;
+  }
+  return 256;
+}
+
+// The launch workgroup size the todo-35 bench uses for a kernelh row (mirrors
+// the run* functions' block() calls in this file).
+int launch_threads_for(const RowSpec &spec) {
+  if (spec.kernel == "attention") {
+    return 64;
+  }
+  if (spec.kernel == "softmax") {
+    const ShapeMap shape = parse_shape_text(spec.shapeText);
+    const long cols = shape.count("cols") ? shape.at("cols") : 256;
+    return static_cast<int>(std::min(cols, 256L));
+  }
+  return 256;
+}
+
+// Core: builds the occupancy report for one kernel+config+target. Writes the
+// compiled artifact into `scratch` (the todo-33 reporter reads
+// <scratch>/<kernel>.{hsaco,ptx}). `backend` may be null (analytic only); the
+// measured path loads the HSACO and hands the function handle to the todo-32
+// weak hook (which returns -1 on this box - the vendor API is broken - so
+// measured_pct degrades to 0 with a note).
+std::optional<kernelh::compiler::OccupancyReport> build_occupancy_report(
+    const std::string &kernel, const std::string &target,
+    const std::string &shapeText, int threads,
+    const std::shared_ptr<kernelh::runtime::Backend> &backend,
+    const std::filesystem::path &scratch, std::string &error) {
+  std::string shape =
+      shapeText.empty() ? default_shape_for(kernel) : shapeText;
+  if (shape.empty()) {
+    error = "unknown kernel '" + kernel +
+            "' for --occupancy (no default shape); use --shape k=v,...";
+    return std::nullopt;
+  }
+  const ShapeMap shapeMap = parse_shape_text(shape);
+  if (shapeMap.empty()) {
+    error = "malformed shape '" + shape + "'";
+    return std::nullopt;
+  }
+
+  CompiledKernel compiled = compileKernelFor(kernel, shape, target);
+  if (!compiled.error.empty()) {
+    error = compiled.error;
+    return std::nullopt;
+  }
+  if (target.rfind("amdgcn", 0) == 0) {
+    const std::filesystem::path hsaco = scratch / (kernel + ".hsaco");
+    std::ofstream out(hsaco, std::ios::binary);
+    if (!out) {
+      error = "cannot write '" + hsaco.string() + "'";
+      return std::nullopt;
+    }
+    out.write(compiled.hsaco.data(),
+              static_cast<std::streamsize>(compiled.hsaco.size()));
+  } else {
+    const std::filesystem::path ptx = scratch / (kernel + ".ptx");
+    std::ofstream out(ptx, std::ios::binary);
+    if (!out) {
+      error = "cannot write '" + ptx.string() + "'";
+      return std::nullopt;
+    }
+    out.write(compiled.ptx.data(),
+              static_cast<std::streamsize>(compiled.ptx.size()));
+  }
+
+  auto resources =
+      kernelh::compiler::resource_report(kernel, target, scratch);
+  if (!resources) {
+    error = resources.error();
+    return std::nullopt;
+  }
+
+  kernelh::DeviceLimits limits;
+  try {
+    limits = kernelh::device_limits_for(device_token(target).c_str());
+  } catch (const std::invalid_argument &e) {
+    error = e.what();
+    return std::nullopt;
+  }
+
+  kernelh::compiler::OccupancyInput input;
+  input.kernel = kernel;
+  input.target = device_token(target);
+  input.config = shape;
+  input.vgpr_count = resources->vgpr_count;
+  input.lds_bytes = resources->lds_bytes;
+  input.threads_per_workgroup =
+      threads > 0 ? threads : default_threads_for(kernel);
+
+  void *function = nullptr;
+  if (backend && target.rfind("amdgcn", 0) == 0 && !compiled.hsaco.empty()) {
+    auto module = kernelh::runtime::GpuModule::load(
+        backend, compiled.hsaco.data(), compiled.hsaco.size());
+    if (module) {
+      auto fn = module->get_function(kernel.c_str());
+      if (fn) {
+        function = fn->handle;
+      }
+    }
+  }
+  return kernelh::compiler::occupancy_report(input, limits, function);
+}
+
 } // namespace
 
 std::optional<BenchRow> run_kernelh_row(
@@ -427,6 +605,102 @@ std::optional<BenchRow> run_kernelh_row(
   }
   error = "kernelh backend has no runner for kernel '" + spec.kernel + "'";
   return std::nullopt;
+}
+
+int write_occupancy_for_kernel(const std::string &kernel,
+                               const std::string &target,
+                               const std::string &shapeText, int threads,
+                               const std::filesystem::path &outDir,
+                               std::string &error) {
+  std::error_code ec;
+  std::filesystem::create_directories(outDir, ec);
+  if (ec) {
+    error = "cannot create output dir '" + outDir.string() +
+            "': " + ec.message();
+    return 1;
+  }
+
+  const std::filesystem::path scratch =
+      std::filesystem::temp_directory_path() / ("kernelh-t36-" + kernel);
+  std::filesystem::remove_all(scratch, ec);
+  std::filesystem::create_directories(scratch, ec);
+
+  // Best-effort device for the measured path; the analytic occupancy works
+  // without one (and the vendor API is broken on this box anyway, so the
+  // measured part degrades to a note).
+  std::shared_ptr<kernelh::runtime::Backend> backend;
+  if (target.rfind("amdgcn", 0) == 0) {
+    backend = kernelh::runtime::make_hip_backend();
+    if (backend) {
+      auto ctx = kernelh::runtime::DeviceContext::create(backend);
+      if (!ctx) {
+        backend.reset();
+      }
+    }
+  }
+
+  auto report = build_occupancy_report(kernel, target, shapeText, threads,
+                                       backend, scratch, error);
+  std::filesystem::remove_all(scratch, ec);
+  if (!report) {
+    return 1;
+  }
+  if (!kernelh::compiler::write_occupancy_json(outDir / "occupancy.json",
+                                               *report) ||
+      !kernelh::compiler::write_occupancy_markdown(outDir / "occupancy.md",
+                                                   {*report})) {
+    error = "cannot write occupancy files in '" + outDir.string() + "'";
+    return 1;
+  }
+  return 0;
+}
+
+int write_occupancy_for_rows(
+    const std::vector<RowSpec> &rows,
+    const std::shared_ptr<kernelh::runtime::Backend> &backend,
+    const std::filesystem::path &outDir, std::string &error) {
+  std::error_code ec;
+  std::filesystem::create_directories(outDir, ec);
+  if (ec) {
+    error = "cannot create output dir '" + outDir.string() +
+            "': " + ec.message();
+    return 1;
+  }
+
+  std::vector<kernelh::compiler::OccupancyReport> reports;
+  reports.reserve(rows.size());
+  int rowIndex = 0;
+  for (const RowSpec &spec : rows) {
+    if (spec.backend != "kernelh") {
+      continue;
+    }
+    const std::filesystem::path scratch =
+        std::filesystem::temp_directory_path() /
+        ("kernelh-t36-row-" + std::to_string(rowIndex++));
+    std::filesystem::remove_all(scratch, ec);
+    std::filesystem::create_directories(scratch, ec);
+    auto report =
+        build_occupancy_report(spec.kernel, "amdgcn-gfx1101", spec.shapeText,
+                               launch_threads_for(spec), backend, scratch,
+                               error);
+    std::filesystem::remove_all(scratch, ec);
+    if (!report) {
+      return 1;
+    }
+    reports.push_back(*report);
+  }
+  if (reports.empty()) {
+    error = "no kernelh rows in the suite for occupancy generation";
+    return 1;
+  }
+  if (!kernelh::compiler::write_occupancy_json_all(outDir / "occupancy.json",
+                                                   reports) ||
+      !kernelh::compiler::write_occupancy_markdown(outDir / "occupancy.md",
+                                                   reports)) {
+    error = "cannot write occupancy files in '" + outDir.string() + "'";
+    return 1;
+  }
+  return 0;
 }
 
 } // namespace kernelh::bench

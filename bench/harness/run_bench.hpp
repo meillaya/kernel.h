@@ -19,10 +19,17 @@ namespace kernelh::bench {
 struct BenchFlags {
   std::string suite = "all";
   std::string out; // a .csv file path OR a directory (results.csv inside)
-  // --occupancy hook (consumed by plan todo 36): accepted by the CLI now so
-  // the flag surface is stable; the occupancy report generation lands with
-  // todo 36 and reads this flag.
+  // --occupancy (plan todo 36): also generate occupancy.{json,md} after the
+  // suite rows are measured.
   bool occupancy = false;
+  // Occupancy-only mode (plan todo 36 acceptance): with --occupancy AND
+  // --kernel, the bench produces occupancy.{json,md} for the one named kernel
+  // + target WITHOUT running any timing rows. --shape/--threads are optional
+  // (per-kernel defaults apply); --target is required.
+  std::string kernel;
+  std::string target;
+  std::string shape;
+  int threads = 0; // launch workgroup size; <= 0 -> per-kernel default
 };
 
 // Resolves `out` to the CSV path: paths already ending in ".csv" are used

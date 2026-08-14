@@ -40,6 +40,8 @@ add_executable(kernelh_unit
   bench_csv_test.cpp
   bench_metrics_test.cpp
   bench_shape_text_test.cpp
+  # Plan todo 36 occupancy tests (hand-computed analytic + [gpu] validation).
+  occupancy_test.cpp
   # Plan todo 38 charts script test (shells out to scripts/charts.py on a
   # hand-computed fixture; asserts the >10KB PNG gate + AI formulas).
   charts_script_test.cpp

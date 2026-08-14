@@ -148,15 +148,26 @@ void printUsage(std::ostream &os) {
       << "  --timeout <seconds>   wall clock per candidate (1..3600, default 30;\n"
        << "                        a hung candidate is skipped with reason timeout)\n"
        << "\n"
-       << "bench options (plan todo 35):\n"
-       << "  --suite <name>        benchmark suite: roofline, kernelh, rocblas,\n"
-       << "                        hipref, cuda-cross, all (default: all)\n"
-       << "  --out <path>          results.csv destination: a .csv file path OR a\n"
-       << "                        directory (results.csv is written inside)\n"
-       << "                        (required)\n"
-       << "  --occupancy           hook for the todo-36 occupancy report (accepted\n"
-       << "                        now; the report generation lands with todo 36)\n"
-       << "\n"
+        << "bench options (plan todo 35 + 36):\n"
+        << "  --suite <name>        benchmark suite: roofline, kernelh, rocblas,\n"
+        << "                        hipref, cuda-cross, all (default: all)\n"
+        << "  --out <path>          results.csv destination: a .csv file path OR a\n"
+        << "                        directory (results.csv is written inside)\n"
+        << "                        (required)\n"
+        << "  --occupancy           (todo 36) also generate occupancy.{json,md}:\n"
+        << "                        after the suite rows when --kernel is absent,\n"
+        << "                        or as an occupancy-only report when --kernel is\n"
+        << "                        given (no timing runs)\n"
+        << "  --kernel <name>       occupancy-only mode: the registry kernel to\n"
+        << "                        report (requires --occupancy + --target)\n"
+        << "  --target <t>          occupancy-only mode: amdgcn-gfx1101 (theoretical\n"
+        << "                        + measured) or nvptx-sm_80 (cross-target\n"
+        << "                        analytic from ptxas -v registers + static smem)\n"
+        << "  --shape k=v,k=v,...   occupancy-only mode: problem dims for --kernel\n"
+        << "                        (optional; a per-kernel default applies)\n"
+        << "  --threads <n>         occupancy-only mode: launch workgroup size\n"
+        << "                        (optional; per-kernel default: 256, attention 64)\n"
+        << "\n"
        << "explore: not implemented yet (plan todo 37); it exits 2 and ignores\n"
        << "any arguments after a warning.\n"
      << "\n"
@@ -1387,9 +1398,10 @@ int notImplemented(const char *subcommand, int todo, int argc, char **argv) {
   return kExitUsage;
 }
 
-// Scans argv[2..] for the bench flags (--suite/--out; --help handled in the
-// loop). On a malformed invocation an error is printed and false is returned
-// (caller prints usage and exits 2).
+// Scans argv[2..] for the bench flags (--suite/--out/--occupancy and the
+// todo-36 occupancy-only flags --kernel/--target/--shape/--threads; --help
+// handled in the loop). On a malformed invocation an error is printed and
+// false is returned (caller prints usage and exits 2).
 bool scanBenchArgs(int argc, char **argv, kernelh::bench::BenchFlags &flags) {
   for (int i = 2; i < argc; ++i) {
     const std::string arg = argv[i];
@@ -1403,9 +1415,26 @@ bool scanBenchArgs(int argc, char **argv, kernelh::bench::BenchFlags &flags) {
     } else if (takeValue(argc, argv, i, arg, "--out", value)) {
       flags.out = value;
     } else if (arg == "--occupancy") {
-      // Hook for plan todo 36: accepted now so the flag surface is stable;
-      // the occupancy report generation consumes it in todo 36.
+      // Plan todo 36: generate occupancy.{json,md} (either in the occupancy-
+      // only mode with --kernel, or after the suite rows when --kernel is
+      // absent).
       flags.occupancy = true;
+    } else if (takeValue(argc, argv, i, arg, "--kernel", value)) {
+      flags.kernel = value;
+    } else if (takeValue(argc, argv, i, arg, "--target", value)) {
+      flags.target = value;
+    } else if (takeValue(argc, argv, i, arg, "--shape", value)) {
+      flags.shape = value;
+    } else if (takeValue(argc, argv, i, arg, "--threads", value)) {
+      errno = 0;
+      char *end = nullptr;
+      const long v = std::strtol(value.c_str(), &end, 10);
+      if (errno != 0 || end == value.c_str() || *end != '\0' || v < 1 ||
+          v > 1048576) {
+        std::cerr << "error: --threads must be an integer in [1,1048576]\n";
+        return false;
+      }
+      flags.threads = static_cast<int>(v);
     } else {
       std::cerr << "error: unknown flag '" << arg << "' for bench\n";
       return false;
@@ -1414,6 +1443,37 @@ bool scanBenchArgs(int argc, char **argv, kernelh::bench::BenchFlags &flags) {
   if (flags.out.empty()) {
     std::cerr << "error: bench requires --out <path> (a .csv file or a dir)\n";
     return false;
+  }
+  // Plan todo 36: the occupancy-only flags only make sense with --occupancy.
+  const bool occupancyOnly = flags.occupancy && !flags.kernel.empty();
+  if (!flags.occupancy &&
+      (!flags.kernel.empty() || !flags.target.empty() ||
+       !flags.shape.empty() || flags.threads != 0)) {
+    std::cerr << "error: --kernel/--target/--shape/--threads require "
+                 "--occupancy\n";
+    return false;
+  }
+  if (occupancyOnly) {
+    if (flags.target.empty()) {
+      std::cerr << "error: --occupancy --kernel requires --target "
+                   "<amdgcn-gfx1101|nvptx-sm_80>\n";
+      return false;
+    }
+    const char *token = deviceTokenFor(flags.target);
+    if (token == nullptr) {
+      std::cerr << "error: unknown --target '" << flags.target
+                << "' for --occupancy\n";
+      printValidTargets(std::cerr);
+      return false;
+    }
+    if (!flags.shape.empty()) {
+      kernelh::ShapeMap parsed;
+      if (!parseShape(flags.shape, parsed) || parsed.empty()) {
+        std::cerr << "error: malformed --shape '" << flags.shape
+                  << "' (expected k=v,k=v,...)\n";
+        return false;
+      }
+    }
   }
   return true;
 }

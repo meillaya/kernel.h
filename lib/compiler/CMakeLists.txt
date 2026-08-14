@@ -15,6 +15,7 @@ add_library(kernelh_compiler STATIC
   launch_verifier.cpp
   resource_reporter.cpp
   autotuner.cpp
+  occupancy.cpp
 )
 
 # Header search: repo-root include/ (kernelh/compiler/device_limits.hpp).
