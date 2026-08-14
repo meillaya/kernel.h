@@ -26,6 +26,7 @@ endforeach()
 
 add_mlir_tool(kernelh-opt main.cpp)
 target_link_libraries(kernelh-opt PRIVATE
+  kernelh_ir
   ${KERNELH_MLIR_STATIC_LIBS}
   LLVM
 )

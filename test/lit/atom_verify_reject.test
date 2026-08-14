@@ -1,0 +1,38 @@
+// Atom IR rejection tests (plan todo 9): malformed / invalid input must fail
+// with a non-zero exit and a diagnostic. `not` inverts kernelh-opt's exit.
+
+// Use-before-def is caught at parse time as an SSA dominance violation.
+// RUN: not kernelh-opt --load-atom %S/../fixtures/invalid_dominance.atom --print-atom 2>&1 | FileCheck %s --check-prefix=DOM
+
+// Shared overflow: the verifier names the 65536-byte LDS limit.
+// RUN: not kernelh-opt --load-atom %S/../fixtures/invalid_shared_overflow.atom --verify 2>&1 | FileCheck %s --check-prefix=SHARED
+
+// i32 constant overflow.
+// RUN: not kernelh-opt --load-atom %S/../fixtures/invalid_i32_overflow.atom --print-atom 2>&1 | FileCheck %s --check-prefix=I32
+
+// Unknown pass: clear error listing registered passes (empty today).
+// RUN: not kernelh-opt --load-atom %S/../fixtures/minimal.atom --run-passes=nonexistent --print-atom 2>&1 | FileCheck %s --check-prefix=PASS
+
+// Truncated input: parser error with line/column.
+// RUN: not kernelh-opt --load-atom %S/../fixtures/invalid_truncated.atom --print-atom 2>&1 | FileCheck %s --check-prefix=TRUNC
+
+// Dump machinery: even with an empty pipeline, --dump-dir writes 00-input.atom.
+// RUN: rm -rf %t.dump && kernelh-opt --load-atom %S/../fixtures/minimal.atom --run-passes= --dump-dir %t.dump && test -f %t.dump/00-input.atom
+
+// DOM: error:
+// DOM: dominance
+
+// SHARED: error:
+// SHARED: shared memory usage
+// SHARED: 65536
+
+// I32: error:
+// I32: does not fit i32
+
+// PASS: error:
+// PASS: unknown pass 'nonexistent'
+// PASS: registered passes
+
+// TRUNC: error:
+// TRUNC: line
+// TRUNC: col

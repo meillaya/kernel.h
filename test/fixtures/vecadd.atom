@@ -1,0 +1,24 @@
+atom.kernel @vecadd(%v0: tensor<1024xf32, global>, %v1: tensor<1024xf32, global>) {
+  tile = [256]
+  map_blocks = true
+  map_warps = false
+  use_shared_memory = false
+  vector_width = 1
+  unroll = 1
+  shape = {n = 1048576}
+  %v2 = atom.const 0 : index
+  %v3 = atom.block_id x : index
+  %v4 = atom.block_dim x : index
+  %v5 = atom.thread_id x : index
+  %v6 = atom.mul %v3, %v4 : index
+  %v7 = atom.add %v6, %v5 : index
+  %v8 = atom.load %v0[%v7] : tensor<1024xf32, global>
+  %v9 = atom.load %v1[%v7] : tensor<1024xf32, global>
+  %v10 = atom.add %v8, %v9 : f32
+  atom.store %v10, %v1[%v7] : tensor<1024xf32, global>
+  %v11 = atom.cmp lt %v10, %v8 : f32
+  %v12 = atom.select %v11, %v10, %v8 : f32
+  atom.store %v12, %v1[%v7] : tensor<1024xf32, global>
+  %v13 = atom.sub %v10, %v8 : f32
+  %v14 = atom.min %v13, %v10 : f32
+}

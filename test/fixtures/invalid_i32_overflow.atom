@@ -1,0 +1,12 @@
+// Negative fixture (plan todo 9): i32 constant that does not fit int32_t.
+// The verifier rejects it with a "does not fit i32" diagnostic.
+atom.kernel @bad_i32_overflow {
+  tile = [1]
+  map_blocks = false
+  map_warps = false
+  use_shared_memory = false
+  vector_width = 1
+  unroll = 1
+  shape = {}
+  %v0 = atom.const 2147483648 : i32
+}

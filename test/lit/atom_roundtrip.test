@@ -1,0 +1,57 @@
+// Atom IR round-trip stability tests (plan todo 9): print -> parse -> print
+// must be byte-identical, and FileCheck locks the stable format later todos
+// (13-19) rely on.
+
+// Sequential round-trips (a pipeline stage racing file creation is racy):
+//   print(f) > a; print(parse(a)) > b; a and b must be identical.
+// RUN: kernelh-opt --load-atom %S/../fixtures/vecadd.atom --print-atom > %t.vecadd.a
+// RUN: kernelh-opt --load-atom %t.vecadd.a --print-atom > %t.vecadd.b
+// RUN: diff %t.vecadd.a %t.vecadd.b
+// RUN: kernelh-opt --load-atom %S/../fixtures/gemm.atom --print-atom > %t.gemm.a
+// RUN: kernelh-opt --load-atom %t.gemm.a --print-atom > %t.gemm.b
+// RUN: diff %t.gemm.a %t.gemm.b
+// RUN: kernelh-opt --load-atom %S/../fixtures/softmax.atom --print-atom > %t.softmax.a
+// RUN: kernelh-opt --load-atom %t.softmax.a --print-atom > %t.softmax.b
+// RUN: diff %t.softmax.a %t.softmax.b
+// RUN: kernelh-opt --load-atom %S/../fixtures/scan.atom --print-atom > %t.scan.a
+// RUN: kernelh-opt --load-atom %t.scan.a --print-atom > %t.scan.b
+// RUN: diff %t.scan.a %t.scan.b
+// RUN: kernelh-opt --load-atom %S/../fixtures/minimal.atom --print-atom > %t.minimal.a
+// RUN: kernelh-opt --load-atom %t.minimal.a --print-atom > %t.minimal.b
+// RUN: diff %t.minimal.a %t.minimal.b
+
+// Stable format lock (vecadd): schedule attrs, per-scope numbering, op forms.
+// RUN: kernelh-opt --load-atom %S/../fixtures/vecadd.atom --print-atom | FileCheck %s
+
+// CHECK-LABEL: atom.kernel @vecadd(%v0: tensor<1024xf32, global>, %v1: tensor<1024xf32, global>) {
+// CHECK:   tile = [256]
+// CHECK:   map_blocks = true
+// CHECK:   shape = {n = 1048576}
+// CHECK:   %v2 = atom.const 0 : index
+// CHECK:   %v7 = atom.add %v6, %v5 : index
+// CHECK:   %v8 = atom.load %v0[%v7] : tensor<1024xf32, global>
+// CHECK:   %v10 = atom.add %v8, %v9 : f32
+// CHECK:   atom.store %v10, %v1[%v7] : tensor<1024xf32, global>
+// CHECK:   %v11 = atom.cmp lt %v10, %v8 : f32
+// CHECK:   %v12 = atom.select %v11, %v10, %v8 : f32
+
+// Stable format lock (gemm): shared memory, barriers, loops with block args.
+// RUN: kernelh-opt --load-atom %S/../fixtures/gemm.atom --print-atom | FileCheck %s --check-prefix=GEMM
+
+// GEMM-LABEL: atom.kernel @gemm(%v0: tensor<1024x1024xf32, global>, %v1: tensor<1024x1024xf32, global>, %v2: tensor<1024x1024xf32, global>) {
+// GEMM:   tile = [64, 64, 32]
+// GEMM:   use_shared_memory = true
+// GEMM:   vector_width = 4
+// GEMM:   unroll = 2
+// GEMM:   %v11 = atom.alloc_shared : tensor<64x64xf32, shared>
+// GEMM:   atom.barrier
+// GEMM:   %v16 = atom.fma %v14, %v15, %v15 : f32
+// GEMM:   %v17 = atom.loop_for %v3 to %v4 step %v5 iter_args(%v16) -> (f32) {
+// GEMM:     ^bb0(%v18: index, %v19: f32):
+// GEMM:       %v21 = atom.add %v20, %v19 : f32
+// GEMM:       atom.yield %v21 : f32
+// GEMM:   }
+// GEMM:   %v18 = atom.load_vec %v0[%v9, %v3] : tensor<1024x1024xf32, global>, vector<4xf32>
+// GEMM:   atom.store_vec %v18, %v1[%v9, %v3] : tensor<1024x1024xf32, global>, vector<4xf32>
+// GEMM:   %v19 = atom.reduce max %v0, dim = 1 : tensor<1024x1024xf32, global>
+// GEMM:   atom.copy %v0, %v1 : tensor<1024x1024xf32, global> to tensor<1024x1024xf32, global>

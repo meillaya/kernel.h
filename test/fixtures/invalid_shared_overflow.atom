@@ -1,0 +1,13 @@
+// Negative fixture (plan todo 9): two 128x128 f32 shared tiles = 131072 bytes,
+// over the 65536-byte LDS limit. The verifier diagnostic names the limit.
+atom.kernel @bad_shared_overflow {
+  tile = [1]
+  map_blocks = false
+  map_warps = false
+  use_shared_memory = true
+  vector_width = 1
+  unroll = 1
+  shape = {}
+  %v0 = atom.alloc_shared : tensor<128x128xf32, shared>
+  %v1 = atom.alloc_shared : tensor<128x128xf32, shared>
+}

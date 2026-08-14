@@ -1,0 +1,39 @@
+atom.kernel @gemm(%v0: tensor<1024x1024xf32, global>, %v1: tensor<1024x1024xf32, global>, %v2: tensor<1024x1024xf32, global>) {
+  tile = [64, 64, 32]
+  map_blocks = true
+  map_warps = true
+  use_shared_memory = true
+  vector_width = 4
+  unroll = 2
+  shape = {k = 1024, m = 1024, n = 1024}
+  %v3 = atom.const 0 : index
+  %v4 = atom.const 32 : index
+  %v5 = atom.const 1 : index
+  %v6 = atom.thread_id x : index
+  %v7 = atom.block_id x : index
+  %v8 = atom.block_dim x : index
+  %v9 = atom.mul %v7, %v8 : index
+  %v10 = atom.add %v9, %v6 : index
+  %v11 = atom.alloc_shared : tensor<64x64xf32, shared>
+  %v12 = atom.alloc_shared : tensor<64x16xf32, shared>
+  %v13 = atom.load %v0[%v10, %v3] : tensor<1024x1024xf32, global>
+  atom.store %v13, %v11[%v6, %v3] : tensor<64x64xf32, shared>
+  atom.barrier
+  %v14 = atom.load %v11[%v6, %v3] : tensor<64x64xf32, shared>
+  %v15 = atom.const 1 : f32
+  %v16 = atom.fma %v14, %v15, %v15 : f32
+  atom.store %v16, %v2[%v10, %v3] : tensor<1024x1024xf32, global>
+  %v17 = atom.loop_for %v3 to %v4 step %v5 iter_args(%v16) -> (f32) {
+    ^bb0(%v18: index, %v19: f32):
+      %v20 = atom.load %v11[%v6, %v18] : tensor<64x64xf32, shared>
+      %v21 = atom.add %v20, %v19 : f32
+      atom.yield %v21 : f32
+  }
+  %v18 = atom.load_vec %v0[%v9, %v3] : tensor<1024x1024xf32, global>, vector<4xf32>
+  atom.store_vec %v18, %v1[%v9, %v3] : tensor<1024x1024xf32, global>, vector<4xf32>
+  %v19 = atom.reduce max %v0, dim = 1 : tensor<1024x1024xf32, global>
+  atom.copy %v0, %v1 : tensor<1024x1024xf32, global> to tensor<1024x1024xf32, global>
+  %v20 = atom.math sqrt %v14 : f32
+  %v21 = atom.const 0 : tensor<64x16xf32, global>
+  %v22 = atom.div %v20, %v16 : f32
+}

@@ -1,0 +1,13 @@
+// Negative fixture (plan todo 9): use-before-def. The parser rejects the
+// undefined value as an SSA dominance violation before the verifier runs.
+atom.kernel @bad_dominance {
+  tile = [1]
+  map_blocks = false
+  map_warps = false
+  use_shared_memory = false
+  vector_width = 1
+  unroll = 1
+  shape = {}
+  %v0 = atom.add %v1, %v1 : f32
+  %v1 = atom.const 1.0 : f32
+}

@@ -1,0 +1,12 @@
+atom.kernel @minimal {
+  tile = []
+  map_blocks = false
+  map_warps = false
+  use_shared_memory = false
+  vector_width = 1
+  unroll = 1
+  shape = {}
+  %v0 = atom.const 0.5 : f32
+  %v1 = atom.const 0.25 : f32
+  %v2 = atom.add %v0, %v1 : f32
+}

@@ -1,0 +1,31 @@
+atom.kernel @scan(%v0: tensor<1024xf32, global>, %v1: tensor<1024xf32, global>) {
+  tile = [256]
+  map_blocks = true
+  map_warps = false
+  use_shared_memory = true
+  vector_width = 4
+  unroll = 1
+  shape = {n = 1024}
+  %v2 = atom.const 0 : index
+  %v3 = atom.const 256 : index
+  %v4 = atom.const 1 : index
+  %v5 = atom.thread_id x : index
+  %v6 = atom.block_id x : index
+  %v7 = atom.block_dim x : index
+  %v8 = atom.mul %v6, %v7 : index
+  %v9 = atom.add %v8, %v5 : index
+  %v10 = atom.alloc_shared : tensor<256xf32, shared>
+  %v11 = atom.load %v0[%v9] : tensor<1024xf32, global>
+  atom.store %v11, %v10[%v5] : tensor<256xf32, shared>
+  atom.barrier
+  %v12 = atom.load %v10[%v5] : tensor<256xf32, shared>
+  %v13 = atom.loop_for %v2 to %v3 step %v4 iter_args(%v12) -> (f32) {
+    ^bb0(%v14: index, %v15: f32):
+      %v16 = atom.load %v10[%v14] : tensor<256xf32, shared>
+      %v17 = atom.max %v16, %v15 : f32
+      atom.yield %v17 : f32
+  }
+  %v14 = atom.load_vec %v0[%v8] : tensor<1024xf32, global>, vector<4xf32>
+  atom.store_vec %v14, %v1[%v8] : tensor<1024xf32, global>, vector<4xf32>
+  atom.store %v13, %v1[%v9] : tensor<1024xf32, global>
+}
