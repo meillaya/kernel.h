@@ -27,6 +27,7 @@ void ensureBuiltinKernels() {
   }
   done = true;
   registerVecaddKernel();
+  registerLayernormKernel();
 }
 
 } // namespace detail

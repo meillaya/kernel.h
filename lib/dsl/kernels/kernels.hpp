@@ -24,6 +24,11 @@ void ensureBuiltinKernels();
 // register* functions wired in there.
 void registerVecaddKernel();
 
+// Registers the layernorm template (lib/dsl/kernels/layernorm.cpp), plan
+// todo 28: two-pass row normalization over the last dim with iter_args
+// reductions. Called by ensureBuiltinKernels.
+void registerLayernormKernel();
+
 } // namespace kernelh::detail
 
 #endif // KERNELH_DSL_INTERNAL_HPP

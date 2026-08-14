@@ -27,6 +27,7 @@ add_executable(kernelh_unit
   backend_test.cpp
   canary_gpu_test.cpp
   e2e_vecadd_test.cpp
+  e2e_layernorm_test.cpp
 )
 target_link_libraries(kernelh_unit PRIVATE Catch2::Catch2
   # WHOLE_ARCHIVE: force-load every pass object so its self-registration

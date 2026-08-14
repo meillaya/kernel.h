@@ -6,6 +6,7 @@ add_library(kernelh_dsl STATIC
   program.cpp
   registry.cpp
   kernels/vecadd.cpp
+  kernels/layernorm.cpp
 )
 
 target_link_libraries(kernelh_dsl PUBLIC kernelh_ir)
