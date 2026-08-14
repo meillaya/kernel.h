@@ -31,6 +31,7 @@ void ensureBuiltinKernels() {
   registerLayernormKernel();
   registerSoftmaxKernel();
   registerScanKernel();
+  registerFusedGeluKernel();
 }
 
 } // namespace detail

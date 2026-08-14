@@ -39,6 +39,12 @@ void registerSoftmaxKernel();
 // block totals) and "scan_totals" (pass-2: scan of the block totals + add
 // offsets). Both are called by ensureBuiltinKernels.
 void registerScanKernel();
+// Registers the fused_gelu template (lib/dsl/kernels/fused_gelu.cpp, plan
+// todo 30): an elementwise TWO-OP CHAIN (t = a*x + b; out = gelu(t)) staged
+// through a rank-1 global intermediate so the fuse pass (todo 14) collapses
+// the producer/consumer pair into ONE loop nest. Called by
+// ensureBuiltinKernels.
+void registerFusedGeluKernel();
 
 } // namespace kernelh::detail
 

@@ -96,7 +96,10 @@ void printUsage(std::ostream &os) {
       << "                        missing)\n"
       << "  --dump-dir <dir>      per-pass IR dumps (00-input.atom + 01..07\n"
       << "                        with the default pipeline)\n"
-     << "\n"
+      << "  --passes-no-fuse      pipeline override: run the default pipeline\n"
+      << "                        WITHOUT the fuse pass (proves fusion fired\n"
+      << "                        via the loop-nest-count differential)\n"
+      << "\n"
      << "explore, bench, tune: not implemented yet (plan todos 37/35/34); they\n"
      << "exit 2 and ignore any arguments after a warning.\n"
      << "\n"
@@ -157,6 +160,7 @@ struct CompileOptions {
   bool hasShape = false;
   bool hasOut = false;
   bool hasDumpDir = false;
+  bool passesNoFuse = false;
   std::string inputFile;
   std::string kernelName;
   kernelh::ShapeMap shape;
@@ -212,6 +216,8 @@ bool scanCompileArgs(int argc, char **argv, CompileOptions &options) {
         return false;
       }
       options.hasDumpDir = true;
+    } else if (arg == "--passes-no-fuse") {
+      options.passesNoFuse = true;
     } else {
       std::cerr << "error: unknown flag '" << arg << "' for compile\n";
       return false;
@@ -392,11 +398,19 @@ int runCompile(const CompileOptions &options) {
   // 4. Default pipeline (todo 19): the pinned canonical order through the
   //    global registry (which picks up every self-registering pass at static
   //    init). --dump-dir writes 00-input.atom + 01..07 per-pass dumps through
-  //    the todo-9 dump hook. The post-pipeline module is printed to
-  //    <out>/<name>.atom.final.
-  const auto pipeline = kernelh::passes::runDefaultPipeline(
-      module, options.hasDumpDir ? std::string_view(options.dumpDir)
-                                 : std::string_view());
+  //    the todo-9 dump hook. --passes-no-fuse (todo 30 fusion-proof override)
+  //    reruns the SAME order minus the fuse pass, so a fused_gelu compile
+  //    produces ONE loop nest vs TWO - the differential the e2e test asserts.
+  //    The post-pipeline module is printed to <out>/<name>.atom.final.
+  const std::string_view dumpView =
+      options.hasDumpDir ? std::string_view(options.dumpDir)
+                         : std::string_view();
+  const auto pipeline =
+      options.passesNoFuse
+          ? kernelh::ir::runPasses(module, "canonicalize,cse,tile,promote-shared,"
+                                           "vectorize,unroll",
+                                   dumpView)
+          : kernelh::passes::runDefaultPipeline(module, dumpView);
   if (!pipeline) {
     std::cerr << "error: " << pipeline.error() << "\n";
     return kExitOperational;
