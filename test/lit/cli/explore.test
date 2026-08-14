@@ -1,0 +1,79 @@
+// End-to-end explore driver tests (plan todo 37): kernelh explore writes the
+// full artifact set (per-pass .atom dumps + MLIR stage dumps + vendor
+// artifacts + resources + occupancy + index) and re-parses every dump
+// IN-PROCESS (the self-check; fail-loud on corruption).
+
+// amdgcn target -> the full artifact set. --out is always explicit in tests
+// (the default is artifacts/run-<timestamp>/ in the CWD).
+// RUN: rm -rf %t.e && kernelh explore --kernel vecadd --shape n=1024 --target amdgcn-gfx1101 --out %t.e | FileCheck %s --check-prefix=WROTE
+// WROTE: wrote {{.*}}00-input.atom
+// WROTE: wrote {{.*}}01-canonicalize.atom
+// WROTE: wrote {{.*}}02-cse.atom
+// WROTE: wrote {{.*}}03-fuse.atom
+// WROTE: wrote {{.*}}04-tile.atom
+// WROTE: wrote {{.*}}05-promote-shared.atom
+// WROTE: wrote {{.*}}06-vectorize.atom
+// WROTE: wrote {{.*}}07-unroll.atom
+// WROTE: wrote {{.*}}atom-dialect.mlir
+// WROTE: wrote {{.*}}gpu.mlir
+// WROTE: wrote {{.*}}rocdl.mlir
+// WROTE: wrote {{.*}}llvm-stage.mlir
+// WROTE: wrote {{.*}}vecadd.isa
+// WROTE: wrote {{.*}}vecadd.hsaco
+// WROTE: wrote {{.*}}resources.json
+// WROTE: wrote {{.*}}occupancy.json
+// WROTE: wrote {{.*}}occupancy.md
+// WROTE: wrote {{.*}}index.md
+// WROTE: reparse: OK 00-input.atom
+// WROTE: reparse: OK 01-canonicalize.atom
+// WROTE: reparse: OK 02-cse.atom
+// WROTE: reparse: OK 03-fuse.atom
+// WROTE: reparse: OK 04-tile.atom
+// WROTE: reparse: OK 05-promote-shared.atom
+// WROTE: reparse: OK 06-vectorize.atom
+// WROTE: reparse: OK 07-unroll.atom
+// WROTE: reparse: OK atom-dialect.mlir (mlir)
+// WROTE: reparse: OK gpu.mlir (mlir)
+// WROTE: reparse: OK llvm-stage.mlir (mlir)
+// WROTE: reparse: OK rocdl.mlir (mlir)
+// WROTE: self-check: OK (8 atom dumps + 4 mlir dumps re-parsed)
+// WROTE: explore ok
+
+// Content probes, not just file existence: 8 atom dumps, the 4 mlir stages,
+// ELF magic on the hsaco, the resources.json schema, the occupancy.md table,
+// and the index.md links (which must mention the hsaco).
+// RUN: test $(ls %t.e/*.atom | wc -l) -eq 8
+// RUN: test -f %t.e/atom-dialect.mlir -a -f %t.e/gpu.mlir -a -f %t.e/rocdl.mlir -a -f %t.e/llvm-stage.mlir
+// RUN: test -f %t.e/vecadd.isa -a -f %t.e/vecadd.hsaco -a -f %t.e/resources.json -a -f %t.e/occupancy.md -a -f %t.e/index.md
+// RUN: head -c4 %t.e/vecadd.hsaco | od -An -tx1 | grep -q '7f 45 4c 46'
+// RUN: grep -qE 's_waitcnt|v_add' %t.e/vecadd.isa
+// RUN: grep -q '"kernel"' %t.e/resources.json
+// RUN: grep -q 'theoretical %' %t.e/occupancy.md
+// RUN: grep -q 'vecadd.hsaco' %t.e/index.md
+
+// Self-check corruption probe (the "self-check has teeth" contract): the test
+// hook truncates one dump right after emission, and the in-process reparse
+// fails loudly naming the file with exit 1. Output is captured to a file and
+// FileCheck-ed separately (a RUN-line pipeline would inherit explore's exit 1).
+// RUN: KERNELH_EXPLORE_CORRUPT_DUMP=03-fuse.atom kernelh explore --kernel vecadd --shape n=1024 --target amdgcn-gfx1101 --out %t.x > %t.x.out 2>&1; test $? -eq 1
+// RUN: FileCheck %s --check-prefix=CORRUPT < %t.x.out
+// CORRUPT: error: explore self-check: reparse failed for {{.*}}03-fuse.atom
+
+// nvptx target -> nvvm.mlir + vecadd.ptx + vecadd.cubin (no isa/hsaco).
+// RUN: rm -rf %t.n && kernelh explore --kernel vecadd --shape n=1024 --target nvptx-sm_80 --out %t.n
+// RUN: test -f %t.n/nvvm.mlir -a -f %t.n/vecadd.ptx -a -f %t.n/vecadd.cubin -a -f %t.n/index.md
+// RUN: head -c4 %t.n/vecadd.cubin | od -An -tx1 | grep -q '7f 45 4c 46'
+// RUN: grep -q '\.visible \.entry vecadd(' %t.n/vecadd.ptx
+
+// Re-entry: the 00-input dump explores again as an --input source (its stem
+// names the artifacts: 00-input.isa + 00-input.hsaco).
+// RUN: rm -rf %t.i && kernelh explore --input %t.e/00-input.atom --target amdgcn-gfx1101 --out %t.i
+// RUN: test -f %t.i/index.md -a -f %t.i/00-input.isa -a -f %t.i/00-input.hsaco -a -f %t.i/resources.json
+
+// Default shape: --kernel without --shape applies the per-kernel default
+// (vecadd -> n=1024; the plan acceptance runs gemm with no --shape).
+// RUN: rm -rf %t.d && kernelh explore --kernel vecadd --target amdgcn-gfx1101 --out %t.d
+// RUN: test -f %t.d/index.md -a -f %t.d/vecadd.hsaco
+
+// Missing --target -> usage + exit 2.
+// RUN: kernelh explore --kernel vecadd --shape n=1024; test $? -eq 2

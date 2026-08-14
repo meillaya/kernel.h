@@ -38,6 +38,7 @@
 #include "kernelh/compiler/device_limits.hpp"
 #include "kernelh/compiler/emitter.hpp"
 #include "kernelh/compiler/launch_verifier.hpp"
+#include "kernelh/compiler/occupancy.hpp"
 #include "kernelh/compiler/resource_reporter.hpp"
 #include "kernelh/Dialect/Atom/IR/AtomDialect.h"
 #include "kernelh/dsl/program.hpp"
@@ -57,8 +58,29 @@
 // metric formulas, roofline microbenchmarks, suite registry, orchestration.
 #include "run_bench.hpp"
 
+#include "mlir/Conversion/ArithToLLVM/ArithToLLVM.h"
+#include "mlir/Conversion/ComplexToLLVM/ComplexToLLVM.h"
+#include "mlir/Conversion/ControlFlowToLLVM/ControlFlowToLLVM.h"
+#include "mlir/Conversion/FuncToLLVM/ConvertFuncToLLVM.h"
+#include "mlir/Conversion/GPUCommon/GPUToLLVM.h"
+#include "mlir/Conversion/GPUToNVVM/GPUToNVVM.h"
+#include "mlir/Conversion/GPUToROCDL/GPUToROCDLPass.h"
+#include "mlir/Conversion/GPUToROCDL/Runtimes.h"
+#include "mlir/Conversion/IndexToLLVM/IndexToLLVM.h"
+#include "mlir/Conversion/MathToLLVM/MathToLLVM.h"
+#include "mlir/Conversion/MemRefToLLVM/MemRefToLLVM.h"
+#include "mlir/Conversion/Passes.h"
+#include "mlir/Conversion/VectorToLLVM/ConvertVectorToLLVM.h"
+#include "mlir/Dialect/AMDGPU/IR/AMDGPUDialect.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/ControlFlow/IR/ControlFlow.h"
+#include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/GPU/IR/GPUDialect.h"
+#include "mlir/Dialect/GPU/Transforms/Passes.h"
+#include "mlir/Dialect/Index/IR/IndexDialect.h"
+#include "mlir/Dialect/LLVMIR/LLVMDialect.h"
+#include "mlir/Dialect/LLVMIR/NVVMDialect.h"
+#include "mlir/Dialect/LLVMIR/ROCDLDialect.h"
 #include "mlir/Dialect/Math/IR/Math.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
@@ -66,6 +88,11 @@
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/DialectRegistry.h"
 #include "mlir/IR/MLIRContext.h"
+#include "mlir/Parser/Parser.h"
+#include "mlir/Pass/PassManager.h"
+#include "mlir/Target/LLVM/NVVM/Target.h"
+#include "mlir/Target/LLVM/ROCDL/Target.h"
+#include "mlir/Transforms/Passes.h"
 
 #include "llvm/Support/raw_ostream.h"
 
@@ -75,6 +102,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <cstring>
+#include <ctime>
 #include <fcntl.h>
 #include <filesystem>
 #include <fstream>
@@ -168,9 +196,24 @@ void printUsage(std::ostream &os) {
         << "  --threads <n>         occupancy-only mode: launch workgroup size\n"
         << "                        (optional; per-kernel default: 256, attention 64)\n"
         << "\n"
-       << "explore: not implemented yet (plan todo 37); it exits 2 and ignores\n"
-       << "any arguments after a warning.\n"
-     << "\n"
+        << "explore options (plan todo 37 - the artifact explorer):\n"
+        << "  --input <file.atom>   explore a parsed .atom file (alternative to\n"
+        << "                        --kernel)\n"
+        << "  --kernel <name>       emit the named kernel template from the DSL\n"
+        << "                        registry (alternative to --input; a per-kernel\n"
+        << "                        default shape applies when --shape is absent)\n"
+        << "  --shape k=v,k=v,...   problem dims for --kernel (e.g. n=1024)\n"
+        << "  --target <t>          device target: amdgcn-gfx1101 -> isa + hsaco,\n"
+        << "                        nvptx-sm_80 -> ptx + cubin\n"
+        << "  --out <dir>           write the artifact set into <dir> (created if\n"
+        << "                        missing; default artifacts/run-<timestamp>/)\n"
+        << "\n"
+        << "  Writes index.md (link + one-line description per file), the 8\n"
+        << "  per-pass .atom dumps (00-input + 01..07), the MLIR stage dumps\n"
+        << "  (atom-dialect/gpu/rocdl-or-nvvm/llvm-stage .mlir), the vendor\n"
+        << "  artifacts, resources.json, occupancy.{json,md}, then RE-PARSES every\n"
+        << "  .atom and .mlir dump in-process (self-check; fail-loud on corruption).\n"
+        << "\n"
      << "--help prints this usage and exits 0.\n";
 }
 
@@ -1377,26 +1420,732 @@ int runTune(const TuneFlags &flags) {
   return kExitOk;
 }
 
+// ---------------------------------------------------------------------------
+// `kernelh explore` (plan todo 37): the artifact explorer.
+//
+// Writes the full per-run artifact set to --out (default
+// artifacts/run-<timestamp>/, gitignored):
+//   00-input.atom + 01..07-<pass>.atom   per-pass dumps (todo 9 hooks, via the
+//                                        todo-19 runDefaultPipeline)
+//   atom-dialect.mlir + gpu.mlir         emitter stage 1/2 (todo 21)
+//   rocdl.mlir | nvvm.mlir + llvm-stage.mlir
+//                                        vendor-conversion intermediates
+//                                        (reproduced in-process, WITHOUT the
+//                                        final gpu-module-to-binary pass)
+//   <kernel>.isa + <kernel>.hsaco        (amdgcn) | <kernel>.ptx +
+//   <kernel>.cubin (nvptx)               todo-22 vendor artifacts
+//   resources.json                       todo-33 reporter
+//   occupancy.json + occupancy.md        todo-36 occupancy (theoretical +
+//                                        best-effort measured)
+//   index.md                             link + one-line description per file
+//
+// ANTI-GREP QA (mandatory): after writing, the self-check re-parses EVERY
+// .atom dump (kernelh::ir::parseModule + verifyModule) and every .mlir dump
+// (mlir::parseSourceString + verify) IN-PROCESS from disk and exits 1 naming
+// the first corrupt file - the "self-check has teeth" contract. The test hook
+// env var KERNELH_EXPLORE_CORRUPT_DUMP=<dumpfile> truncates that dump right
+// after emission so the corruption probe is deterministic (plan todo-37 QA).
+// ---------------------------------------------------------------------------
+
+struct ExploreOptions {
+  bool hasInput = false;
+  bool hasKernel = false;
+  bool hasShape = false;
+  bool hasTarget = false;
+  bool hasOut = false;
+  std::string inputFile;
+  std::string kernelName;
+  kernelh::ShapeMap shape;
+  std::string target;
+  std::string outDir;
+};
+
+// Default --out dir: artifacts/run-<YYYYMMDD-HHMMSS> (repo .gitignore covers
+// artifacts/).
+std::string defaultExploreOutDir() {
+  const std::time_t now = std::time(nullptr);
+  std::tm tm{};
+  ::localtime_r(&now, &tm);
+  char buf[64];
+  std::strftime(buf, sizeof(buf), "artifacts/run-%Y%m%d-%H%M%S", &tm);
+  return buf;
+}
+
+// Per-kernel default shapes for `--kernel` without `--shape` (the DSL
+// templates REQUIRE shape keys; mirrors bench/harness/kernelh_backend.cpp's
+// default_shape_for). Returns false for kernels without a default - the
+// registry emit error then names the missing key.
+bool defaultShapeFor(const std::string &kernel, kernelh::ShapeMap &shape) {
+  struct Entry {
+    const char *kernel;
+    const char *shape;
+  };
+  static const Entry kEntries[] = {
+      {"gemm", "m=512,n=512,k=512"},
+      {"softmax", "rows=4096,cols=1024"},
+      {"layernorm", "rows=4096,cols=1024"},
+      {"scan", "n=100000"},
+      {"fused_gelu", "n=1048576"},
+      {"attention", "batch=2,heads=8,seq=512,head_dim=64"},
+      {"vecadd", "n=1024"},
+  };
+  for (const Entry &e : kEntries) {
+    if (kernel == e.kernel) {
+      return parseShape(e.shape, shape);
+    }
+  }
+  return false;
+}
+
+bool scanExploreArgs(int argc, char **argv, ExploreOptions &options) {
+  for (int i = 2; i < argc; ++i) {
+    const std::string arg = argv[i];
+    if (arg == "--help" || arg == "-h") {
+      printUsage(std::cout);
+      std::exit(kExitOk);
+    }
+    if (arg == "--input" || arg.rfind("--input=", 0) == 0) {
+      if (!takeValue(argc, argv, i, arg, "--input", options.inputFile)) {
+        return false;
+      }
+      options.hasInput = true;
+    } else if (arg == "--kernel" || arg.rfind("--kernel=", 0) == 0) {
+      if (!takeValue(argc, argv, i, arg, "--kernel", options.kernelName)) {
+        return false;
+      }
+      options.hasKernel = true;
+    } else if (arg == "--shape" || arg.rfind("--shape=", 0) == 0) {
+      std::string shapeText;
+      if (!takeValue(argc, argv, i, arg, "--shape", shapeText)) {
+        return false;
+      }
+      if (!parseShape(shapeText, options.shape)) {
+        std::cerr << "error: malformed --shape '" << shapeText
+                  << "' (expected k=v,k=v,...)\n";
+        return false;
+      }
+      options.hasShape = true;
+    } else if (arg == "--target" || arg.rfind("--target=", 0) == 0) {
+      if (!takeValue(argc, argv, i, arg, "--target", options.target)) {
+        return false;
+      }
+      options.hasTarget = true;
+    } else if (arg == "--out" || arg.rfind("--out=", 0) == 0) {
+      if (!takeValue(argc, argv, i, arg, "--out", options.outDir)) {
+        return false;
+      }
+      options.hasOut = true;
+    } else {
+      std::cerr << "error: unknown flag '" << arg << "' for explore\n";
+      return false;
+    }
+  }
+
+  if (options.hasInput && options.hasKernel) {
+    std::cerr << "error: --input and --kernel are conflicting input sources\n";
+    return false;
+  }
+  if (!options.hasInput && !options.hasKernel) {
+    std::cerr << "error: explore requires --input <file.atom> or --kernel "
+                 "<registry-name>\n";
+    return false;
+  }
+  if (options.hasShape && !options.hasKernel) {
+    std::cerr << "error: --shape requires --kernel\n";
+    return false;
+  }
+  if (options.hasKernel && !options.hasShape) {
+    // Per-kernel default shape (the plan acceptance passes no --shape).
+    (void)defaultShapeFor(options.kernelName, options.shape);
+  }
+  if (!options.hasTarget) {
+    std::cerr << "error: explore requires --target "
+                 "<amdgcn-gfx1101|nvptx-sm_80>\n";
+    return false;
+  }
+  if (!options.hasOut) {
+    options.outDir = defaultExploreOutDir();
+  }
+  return true;
+}
+
+// The dialect set the explore .mlir stages + self-check touch: the emitter
+// subset (mirror of registerCompileDialects) PLUS the vendor-conversion
+// dialects + the ConvertToLLVMPatternInterface registrations (mirror of
+// backends.cpp's ensureBackendDialects). registerAllGPUToLLVMIRTranslations is
+// NOT needed: explore's reproduced pipeline stops before the binary
+// serialization (compileToBlob/compileToText register it internally).
+void registerExploreDialects(mlir::MLIRContext &ctx) {
+  mlir::DialectRegistry registry;
+  registry.insert<mlir::kernelh::atom::AtomDialect, mlir::gpu::GPUDialect,
+                  mlir::scf::SCFDialect, mlir::memref::MemRefDialect,
+                  mlir::vector::VectorDialect, mlir::arith::ArithDialect,
+                  mlir::math::MathDialect, mlir::func::FuncDialect,
+                  mlir::cf::ControlFlowDialect, mlir::index::IndexDialect,
+                  mlir::LLVM::LLVMDialect, mlir::NVVM::NVVMDialect,
+                  mlir::ROCDL::ROCDLDialect, mlir::amdgpu::AMDGPUDialect>();
+  mlir::registerConvertFuncToLLVMInterface(registry);
+  mlir::cf::registerConvertControlFlowToLLVMInterface(registry);
+  mlir::index::registerConvertIndexToLLVMInterface(registry);
+  mlir::arith::registerConvertArithToLLVMInterface(registry);
+  mlir::registerConvertMemRefToLLVMInterface(registry);
+  mlir::gpu::registerConvertGpuToLLVMInterface(registry);
+  mlir::NVVM::registerConvertGpuToNVVMInterface(registry);
+  mlir::vector::registerConvertVectorToLLVMInterface(registry);
+  mlir::registerConvertMathToLLVMInterface(registry);
+  mlir::registerConvertComplexToLLVMInterface(registry);
+  ctx.appendDialectRegistry(registry);
+  ctx.loadAllAvailableDialects();
+}
+
+// The todo-21 emitter stored the gpu.func kernel marker under the literal
+// "kernel" attribute; the vendor lowering needs the dialect's "gpu.kernel"
+// (the same shim backends.cpp applies). Explore reproduces it for its own
+// intermediate-stage clones.
+void normalizeKernelMarkers(mlir::ModuleOp module) {
+  module.walk([&](mlir::gpu::GPUFuncOp func) {
+    if (func.isKernel()) {
+      return;
+    }
+    mlir::Attribute kernelAttr = func->getAttr("kernel");
+    if (!kernelAttr || !mlir::isa<mlir::UnitAttr>(kernelAttr)) {
+      return;
+    }
+    func->removeAttr("kernel");
+    func->setAttr(mlir::gpu::GPUDialect::getKernelFuncAttrName(), kernelAttr);
+  });
+}
+
+// The two vendor-conversion intermediate texts (the MLIR instrumentation
+// equivalent of -mlir-print-ir-after-all with the binary pass removed).
+struct VendorStageTexts {
+  std::string vendorText; // nvvm.mlir | rocdl.mlir (after attach-target)
+  std::string llvmText;   // llvm-stage.mlir (after gpu-to-llvm + reconcile)
+};
+
+// Reproduces the vendor conversion passes (the pinned todo 7/8 recipes) on a
+// FRESH clone of the gpu module, WITHOUT gpu-module-to-binary, printing the
+// module at two intermediate stages:
+//   stage A: gpu.module(convert-vector-to-llvm, convert-scf-to-cf,
+//             convert-gpu-to-<nvvm|rocdl>) + <nvvm|rocdl>-attach-target
+//   stage B: gpu-to-llvm + reconcile-unrealized-casts
+// This is a minimal in-process pass-pipeline reproduction in explore itself
+// (the backends API exposes only the final compiled artifacts, so the
+// intermediates come from here - no core changes).
+std::expected<VendorStageTexts, std::string>
+vendorIntermediateTexts(mlir::OwningOpRef<mlir::ModuleOp> &gpu,
+                        const kernelh::compiler::TargetSpec &spec,
+                        mlir::MLIRContext &ctx) {
+  mlir::OwningOpRef<mlir::ModuleOp> module(
+      mlir::cast<mlir::ModuleOp>(gpu->clone()));
+  normalizeKernelMarkers(*module);
+
+  mlir::PassManager pm(&ctx);
+  auto &gpuPm = pm.nest<mlir::gpu::GPUModuleOp>();
+  gpuPm.addPass(mlir::createConvertVectorToLLVMPass());
+  gpuPm.addPass(mlir::createSCFToControlFlowPass());
+  if (spec.isNVPTX()) {
+    mlir::NVVM::registerNVVMTargetInterfaceExternalModels(ctx);
+    mlir::ConvertGpuOpsToNVVMOpsOptions nvvmOpts;
+    gpuPm.addPass(mlir::createConvertGpuOpsToNVVMOps(nvvmOpts));
+    mlir::GpuNVVMAttachTargetOptions attachOpts;
+    attachOpts.chip = spec.chip();
+    attachOpts.optLevel = 3;
+    pm.addPass(mlir::createGpuNVVMAttachTarget(attachOpts));
+  } else {
+    mlir::ROCDL::registerROCDLTargetInterfaceExternalModels(ctx);
+    gpuPm.addPass(mlir::createLowerGpuOpsToROCDLOpsPass(
+        spec.chip(), mlir::kDeriveIndexBitwidthFromDataLayout,
+        /*useBarePtrCallConv=*/false, mlir::gpu::amd::Runtime::HIP));
+    mlir::GpuROCDLAttachTargetOptions attachOpts;
+    attachOpts.chip = spec.chip();
+    pm.addPass(mlir::createGpuROCDLAttachTarget(attachOpts));
+  }
+  if (mlir::failed(pm.run(*module))) {
+    return std::unexpected("vendor conversion pipeline failed for '" +
+                           spec.target + "'");
+  }
+  VendorStageTexts out;
+  {
+    llvm::raw_string_ostream os(out.vendorText);
+    module->print(os);
+    os.flush();
+  }
+
+  mlir::PassManager pm2(&ctx);
+  mlir::GpuToLLVMConversionPassOptions gpuToLLVMOpts;
+  pm2.addPass(mlir::createGpuToLLVMConversionPass(gpuToLLVMOpts));
+  pm2.addPass(mlir::createReconcileUnrealizedCastsPass());
+  if (mlir::failed(pm2.run(*module))) {
+    return std::unexpected("gpu-to-llvm + reconcile-unrealized-casts failed "
+                           "for '" +
+                           spec.target + "'");
+  }
+  {
+    llvm::raw_string_ostream os(out.llvmText);
+    module->print(os);
+    os.flush();
+  }
+  return out;
+}
+
+// ANTI-GREP QA: re-parses every .atom dump (parseModule + verifyModule) and
+// every .mlir dump (mlir::parseSourceString + verify) IN-PROCESS from DISK.
+// Returns 0 when every dump re-parses cleanly; on the first corrupt file it
+// prints `error: explore self-check: reparse failed for '<file>'` and returns
+// 1 (the "self-check has teeth" contract - a truncated dump fails loudly).
+int runExploreSelfCheck(const std::filesystem::path &outDir,
+                        const kernelh::DeviceLimits &limits) {
+  std::vector<std::filesystem::path> atomFiles, mlirFiles;
+  for (const auto &entry : std::filesystem::directory_iterator(outDir)) {
+    if (!entry.is_regular_file()) {
+      continue;
+    }
+    const std::string ext = entry.path().extension().string();
+    if (ext == ".atom") {
+      atomFiles.push_back(entry.path());
+    } else if (ext == ".mlir") {
+      mlirFiles.push_back(entry.path());
+    }
+  }
+  std::sort(atomFiles.begin(), atomFiles.end());
+  std::sort(mlirFiles.begin(), mlirFiles.end());
+
+  for (const std::filesystem::path &file : atomFiles) {
+    std::ifstream in(file);
+    if (!in) {
+      std::cerr << "error: explore self-check: cannot open dump '"
+                << file.string() << "'\n";
+      return kExitOperational;
+    }
+    auto parsed = kernelh::ir::parseModule(readAll(in));
+    if (!parsed) {
+      std::cerr << "error: explore self-check: reparse failed for '"
+                << file.string() << "': " << parsed.error() << "\n";
+      return kExitOperational;
+    }
+    const kernelh::ir::Diagnostics diags =
+        kernelh::ir::verifyModule(*parsed, limits);
+    for (const kernelh::ir::Diagnostic &d : diags) {
+      if (d.severity == kernelh::ir::Diagnostic::Severity::Error) {
+        std::cerr << "error: explore self-check: reparse failed for '"
+                  << file.string() << "': " << d.toString() << "\n";
+        return kExitOperational;
+      }
+    }
+    std::cout << "reparse: OK " << file.filename().string() << "\n";
+  }
+
+  mlir::MLIRContext parseCtx;
+  registerExploreDialects(parseCtx);
+  for (const std::filesystem::path &file : mlirFiles) {
+    std::ifstream in(file);
+    if (!in) {
+      std::cerr << "error: explore self-check: cannot open dump '"
+                << file.string() << "'\n";
+      return kExitOperational;
+    }
+    auto module =
+        mlir::parseSourceString<mlir::ModuleOp>(readAll(in), &parseCtx);
+    if (!module) {
+      std::cerr << "error: explore self-check: reparse failed for '"
+                << file.string() << "'\n";
+      return kExitOperational;
+    }
+    if (mlir::failed(module->verify())) {
+      std::cerr << "error: explore self-check: reparse failed for '"
+                << file.string() << "' (verification failed)\n";
+      return kExitOperational;
+    }
+    std::cout << "reparse: OK " << file.filename().string() << " (mlir)\n";
+  }
+  std::cout << "self-check: OK (" << atomFiles.size() << " atom dumps + "
+            << mlirFiles.size() << " mlir dumps re-parsed)\n";
+  return kExitOk;
+}
+
+std::string describePass(const std::string &name) {
+  if (name == "canonicalize") {
+    return "constant folding, identity elision, dead-op elimination";
+  }
+  if (name == "cse") {
+    return "value-numbered common subexpression elimination";
+  }
+  if (name == "fuse") {
+    return "elementwise chain fusion (same-domain producer/consumer loops)";
+  }
+  if (name == "tile") {
+    return "block/warp tiling of the domain loop";
+  }
+  if (name == "promote-shared") {
+    return "static shared-memory promotion of tiled staging";
+  }
+  if (name == "vectorize") {
+    return "vector widening of load->compute->store chains";
+  }
+  if (name == "unroll") {
+    return "loop unrolling (full when trip <= 8, else partial)";
+  }
+  return "the '" + name + "' pass";
+}
+
+// index.md: a link + one-line description per artifact file.
+std::string buildIndexMd(const std::string &kernel, const std::string &target,
+                         const kernelh::compiler::TargetSpec &spec,
+                         const std::vector<std::string> &passOrder) {
+  std::ostringstream os;
+  os << "# kernelh explore: " << kernel << " (" << target << ")\n\n"
+     << "Artifact explorer output (plan todo 37): per-pass custom-IR dumps, "
+        "MLIR stage dumps, and the vendor artifacts for one kernel + target. "
+        "Every .atom and .mlir dump was re-parsed in-process by the explore "
+        "self-check (anti-grep QA).\n\n"
+     << "| file | description |\n"
+     << "| --- | --- |\n"
+     << "| [00-input.atom](00-input.atom) | input module after parsing "
+        "(pre-pipeline; re-usable via `--input`) |\n";
+  int passIndex = 1;
+  for (const std::string &pass : passOrder) {
+    char prefix[8];
+    std::snprintf(prefix, sizeof(prefix), "%02d", passIndex++);
+    const std::string fname = std::string(prefix) + "-" + pass + ".atom";
+    os << "| [" << fname << "](" << fname << ") | after the " << pass
+       << " pass (" << describePass(pass) << ") |\n";
+  }
+  os << "| [atom-dialect.mlir](atom-dialect.mlir) | emitter stage 1: custom "
+        "atom IR lowered to the atom MLIR dialect |\n"
+     << "| [gpu.mlir](gpu.mlir) | emitter stage 2: atom dialect lowered to a "
+        "device-only gpu.module |\n";
+  if (spec.isNVPTX()) {
+    os << "| [nvvm.mlir](nvvm.mlir) | after NVVM conversion + attach-target, "
+          "before gpu-module-to-binary |\n";
+  } else {
+    os << "| [rocdl.mlir](rocdl.mlir) | after ROCDL conversion + "
+          "attach-target, before gpu-module-to-binary |\n";
+  }
+  os << "| [llvm-stage.mlir](llvm-stage.mlir) | after gpu-to-llvm + "
+        "reconcile-unrealized-casts |\n";
+  if (spec.isNVPTX()) {
+    os << "| [" << kernel << ".ptx](" << kernel << ".ptx) | NVVM PTX text |\n"
+       << "| [" << kernel << ".cubin](" << kernel << ".cubin) | CUDA cubin "
+          "code object |\n";
+  } else {
+    os << "| [" << kernel << ".isa](" << kernel << ".isa) | AMDGCN assembly "
+          "text |\n"
+       << "| [" << kernel << ".hsaco](" << kernel << ".hsaco) | HSACO code "
+          "object |\n";
+  }
+  os << "| [resources.json](resources.json) | per-kernel resource usage "
+        "(vgpr/sgpr/lds/wavefront/occupancy estimate, todo-33 schema) |\n"
+     << "| [occupancy.md](occupancy.md) | occupancy report (theoretical + "
+        "measured, todo-36 generator) |\n"
+     << "| [occupancy.json](occupancy.json) | occupancy report, "
+        "machine-readable |\n"
+     << "| [index.md](index.md) | this file |\n";
+  return os.str();
+}
+
+int runExplore(const ExploreOptions &options) {
+  // 1. Input source: parse the .atom file, or emit the registry kernel.
+  kernelh::ir::Module module;
+  std::string outName;
+  if (options.hasInput) {
+    std::ifstream in(options.inputFile);
+    if (!in) {
+      std::cerr << "error: cannot open input file '" << options.inputFile
+                << "'\n";
+      return kExitOperational;
+    }
+    auto parsed = kernelh::ir::parseModule(readAll(in));
+    if (!parsed) {
+      std::cerr << "error: " << parsed.error() << "\n";
+      return kExitOperational;
+    }
+    module = std::move(*parsed);
+    outName = std::filesystem::path(options.inputFile).stem().string();
+  } else {
+    try {
+      kernelh::ProgramBuilder builder = kernelh::program();
+      builder.kernel(options.kernelName).shape(options.shape);
+      kernelh::EmittedKernel emitted = builder.emit();
+      module = std::move(emitted.module);
+    } catch (const std::exception &e) {
+      std::cerr << "error: " << e.what() << "\n";
+      return kExitOperational;
+    }
+    outName = module.kernels.front()->name;
+  }
+  const std::string kernelName = module.kernels.front()->name;
+
+  // 2. Target lookup + structural verification against the device table.
+  const char *deviceToken = deviceTokenFor(options.target);
+  kernelh::DeviceLimits limits;
+  try {
+    limits = kernelh::device_limits_for(
+        deviceToken != nullptr ? deviceToken : options.target.c_str());
+  } catch (const std::invalid_argument &e) {
+    std::cerr << "error: " << e.what() << "\n";
+    printValidTargets(std::cerr);
+    return kExitOperational;
+  }
+  const kernelh::ir::Diagnostics diags = kernelh::ir::verifyModule(module, limits);
+  for (const kernelh::ir::Diagnostic &d : diags) {
+    if (d.severity == kernelh::ir::Diagnostic::Severity::Error) {
+      std::cerr << d.toString() << "\n";
+      return kExitOperational;
+    }
+  }
+  auto spec = kernelh::compiler::parseTargetSpec(options.target);
+  if (!spec) {
+    std::cerr << "error: " << spec.error() << "\n";
+    printValidTargets(std::cerr);
+    return kExitOperational;
+  }
+
+  // 3. Create the output dir.
+  std::error_code ec;
+  std::filesystem::create_directories(options.outDir, ec);
+  if (ec) {
+    std::cerr << "error: cannot create output dir '" << options.outDir
+              << "': " << ec.message() << "\n";
+    return kExitOperational;
+  }
+  const std::filesystem::path outDir(options.outDir);
+
+  // 4. Per-pass dumps (todo 9 hooks via the todo-19 default pipeline):
+  //    00-input.atom + 01-<pass>.atom ... 07-<pass>.atom.
+  const std::vector<std::string> passOrder =
+      kernelh::passes::defaultPipelineOrder();
+  auto pipeline = kernelh::passes::runDefaultPipeline(module, options.outDir);
+  if (!pipeline) {
+    std::cerr << "error: " << pipeline.error() << "\n";
+    return kExitOperational;
+  }
+  std::vector<std::filesystem::path> dumps;
+  for (const auto &entry : std::filesystem::directory_iterator(outDir)) {
+    if (entry.is_regular_file() && entry.path().extension() == ".atom") {
+      dumps.push_back(entry.path());
+    }
+  }
+  std::sort(dumps.begin(), dumps.end());
+  for (const std::filesystem::path &dump : dumps) {
+    std::cout << "wrote " << dump.string() << "\n";
+  }
+
+  // Test hook (plan todo-37 QA): truncate one dump right after emission so
+  // the self-check's corruption probe is deterministic (a re-run with
+  // KERNELH_EXPLORE_CORRUPT_DUMP=<dumpfile> must fail loudly naming it).
+  if (const char *corrupt = std::getenv("KERNELH_EXPLORE_CORRUPT_DUMP");
+      corrupt != nullptr && *corrupt != '\0') {
+    std::ofstream corruptFile(outDir / corrupt, std::ios::trunc);
+    corruptFile << "deliberately corrupt .atom text "
+                   "(KERNELH_EXPLORE_CORRUPT_DUMP)\n";
+  }
+
+  // 5. MLIR stage dumps (todo 21): stage 1 = atom dialect; stage 2 = the
+  //    gpu.module with the canonicalize+cse cleanup (matching
+  //    emitGpuModule), so gpu.mlir is exactly the module the vendor stages
+  //    and the final artifacts come from.
+  mlir::MLIRContext ctx;
+  registerCompileDialects(ctx);
+  auto atom = kernelh::compiler::lowerToAtomDialect(module, ctx);
+  if (!atom) {
+    std::cerr << "error: " << atom.error() << "\n";
+    return kExitOperational;
+  }
+  const std::filesystem::path atomDialectFile = outDir / "atom-dialect.mlir";
+  {
+    std::string text;
+    llvm::raw_string_ostream os(text);
+    (**atom).print(os);
+    os.flush();
+    if (!writeTextFile(atomDialectFile, text)) {
+      return kExitOperational;
+    }
+  }
+  std::cout << "wrote " << atomDialectFile.string() << "\n";
+
+  auto gpu = kernelh::compiler::lowerAtomToGpu((*atom).get(), ctx);
+  if (!gpu) {
+    std::cerr << "error: " << gpu.error() << "\n";
+    return kExitOperational;
+  }
+  {
+    mlir::PassManager cleanup(&ctx);
+    cleanup.addPass(mlir::createCanonicalizerPass());
+    cleanup.addPass(mlir::createCSEPass());
+    if (mlir::failed(cleanup.run(**gpu))) {
+      std::cerr << "error: emitter cleanup (canonicalize + cse) failed\n";
+      return kExitOperational;
+    }
+  }
+  const std::filesystem::path gpuFile = outDir / "gpu.mlir";
+  {
+    std::string text;
+    llvm::raw_string_ostream os(text);
+    (**gpu).print(os);
+    os.flush();
+    if (!writeTextFile(gpuFile, text)) {
+      return kExitOperational;
+    }
+  }
+  std::cout << "wrote " << gpuFile.string() << "\n";
+
+  // 6. Vendor-conversion intermediates (before gpu-module-to-binary): the
+  //    reproduced pipeline on a fresh clone.
+  registerExploreDialects(ctx);
+  auto stages = vendorIntermediateTexts(*gpu, *spec, ctx);
+  if (!stages) {
+    std::cerr << "error: " << stages.error() << "\n";
+    return kExitOperational;
+  }
+  const std::filesystem::path vendorFile =
+      outDir / (spec->isNVPTX() ? "nvvm.mlir" : "rocdl.mlir");
+  if (!writeTextFile(vendorFile, stages->vendorText)) {
+    return kExitOperational;
+  }
+  std::cout << "wrote " << vendorFile.string() << "\n";
+  const std::filesystem::path llvmStageFile = outDir / "llvm-stage.mlir";
+  if (!writeTextFile(llvmStageFile, stages->llvmText)) {
+    return kExitOperational;
+  }
+  std::cout << "wrote " << llvmStageFile.string() << "\n";
+
+  // 7. Vendor artifacts (todo 22): a FRESH clone per artifact (the compile
+  //    mutates gpu.module -> gpu.binary). The blobs stay in memory for the
+  //    measured-occupancy path below.
+  const auto cloneOf = [](mlir::OwningOpRef<mlir::ModuleOp> &src) {
+    return mlir::OwningOpRef<mlir::ModuleOp>(
+        mlir::cast<mlir::ModuleOp>(src->clone()));
+  };
+  std::vector<char> hsaco; // amdgcn blob (empty for nvptx)
+  if (spec->isNVPTX()) {
+    auto ptxModule = cloneOf(*gpu);
+    auto ptx = kernelh::compiler::compileToText(ptxModule, *spec, "ptx");
+    if (!ptx) {
+      std::cerr << "error: " << ptx.error() << "\n";
+      return kExitOperational;
+    }
+    const std::filesystem::path ptxFile = outDir / (outName + ".ptx");
+    if (!writeTextFile(ptxFile, *ptx)) {
+      return kExitOperational;
+    }
+    std::cout << "wrote " << ptxFile.string() << "\n";
+
+    auto cubinModule = cloneOf(*gpu);
+    auto cubin = kernelh::compiler::compileToBlob(cubinModule, *spec, "cubin");
+    if (!cubin) {
+      std::cerr << "error: " << cubin.error() << "\n";
+      return kExitOperational;
+    }
+    const std::filesystem::path cubinFile = outDir / (outName + ".cubin");
+    if (!writeBlobFile(cubinFile, *cubin)) {
+      return kExitOperational;
+    }
+    std::cout << "wrote " << cubinFile.string() << "\n";
+  } else {
+    auto isaModule = cloneOf(*gpu);
+    auto isa = kernelh::compiler::compileToText(isaModule, *spec, "isa");
+    if (!isa) {
+      std::cerr << "error: " << isa.error() << "\n";
+      return kExitOperational;
+    }
+    const std::filesystem::path isaFile = outDir / (outName + ".isa");
+    if (!writeTextFile(isaFile, *isa)) {
+      return kExitOperational;
+    }
+    std::cout << "wrote " << isaFile.string() << "\n";
+
+    auto hsacoModule = cloneOf(*gpu);
+    auto hsacoBlob =
+        kernelh::compiler::compileToBlob(hsacoModule, *spec, "hsaco");
+    if (!hsacoBlob) {
+      std::cerr << "error: " << hsacoBlob.error() << "\n";
+      return kExitOperational;
+    }
+    hsaco = std::move(*hsacoBlob);
+    const std::filesystem::path hsacoFile = outDir / (outName + ".hsaco");
+    if (!writeBlobFile(hsacoFile, hsaco)) {
+      return kExitOperational;
+    }
+    std::cout << "wrote " << hsacoFile.string() << "\n";
+  }
+
+  // 8. resources.json (todo-33 reporter): reads <out>/<name>.{hsaco,ptx}.
+  auto resources =
+      kernelh::compiler::resource_report(outName, options.target, outDir);
+  if (!resources) {
+    std::cerr << "error: " << resources.error() << "\n";
+    return kExitOperational;
+  }
+  std::cout << "wrote " << (outDir / "resources.json").string() << "\n";
+
+  // 9. occupancy.md (todo-36): analytic (Oracle B5) + best-effort measured
+  //    (the todo-32 hook on the loaded kernel; degrades to a note - the
+  //    vendor API is broken on this box, so measured_pct = 0 with a note).
+  const std::string shapeText =
+      options.hasKernel ? shapeToString(options.shape) : options.inputFile;
+  kernelh::compiler::OccupancyInput occInput;
+  occInput.kernel = kernelName;
+  occInput.target = deviceToken != nullptr ? deviceToken : options.target;
+  occInput.config = shapeText;
+  occInput.vgpr_count = resources->vgpr_count;
+  occInput.lds_bytes = resources->lds_bytes;
+  occInput.threads_per_workgroup = kernelName == "attention" ? 64 : 256;
+  void *function = nullptr;
+  if (spec->isROCDL() && !hsaco.empty()) {
+    auto backend = kernelh::runtime::make_hip_backend();
+    if (backend) {
+      auto devCtx = kernelh::runtime::DeviceContext::create(backend);
+      if (devCtx) {
+        auto loaded =
+            kernelh::runtime::GpuModule::load(backend, hsaco.data(), hsaco.size());
+        if (loaded) {
+          auto fn = loaded->get_function(kernelName.c_str());
+          if (fn) {
+            function = fn->handle;
+          }
+        }
+      }
+    }
+  }
+  const kernelh::compiler::OccupancyReport occReport =
+      kernelh::compiler::occupancy_report(occInput, limits, function);
+  if (!kernelh::compiler::write_occupancy_json(outDir / "occupancy.json",
+                                               occReport)) {
+    std::cerr << "error: cannot write '" << (outDir / "occupancy.json").string()
+              << "'\n";
+    return kExitOperational;
+  }
+  std::cout << "wrote " << (outDir / "occupancy.json").string() << "\n";
+  if (!kernelh::compiler::write_occupancy_markdown(outDir / "occupancy.md",
+                                                   {occReport})) {
+    std::cerr << "error: cannot write '" << (outDir / "occupancy.md").string()
+              << "'\n";
+    return kExitOperational;
+  }
+  std::cout << "wrote " << (outDir / "occupancy.md").string() << "\n";
+
+  // 10. index.md (written last: it links every artifact above).
+  const std::string indexText =
+      buildIndexMd(kernelName, options.target, *spec, passOrder);
+  const std::filesystem::path indexFile = outDir / "index.md";
+  if (!writeTextFile(indexFile, indexText)) {
+    return kExitOperational;
+  }
+  std::cout << "wrote " << indexFile.string() << "\n";
+
+  // 11. Self-check (anti-grep QA, fail-loud): re-parse every dump in-process.
+  const int selfCheck = runExploreSelfCheck(outDir, limits);
+  if (selfCheck != kExitOk) {
+    return selfCheck;
+  }
+
+  std::cout << "explore ok\n";
+  return kExitOk;
+}
+
 } // namespace
 
-
-// explore/bench stubs: accepted so the CLI shape is stable, but they only
-// report the plan todo that implements them (37/35) and exit 2. Extra
-// arguments are ignored after a warning (their real flags arrive with their
-// todos). `tune` is fully implemented above (plan todo 34). `bench` is fully
-// implemented below (plan todo 35) via the bench harness library.
-int notImplemented(const char *subcommand, int todo, int argc, char **argv) {
-  std::cerr << subcommand << ": not implemented yet (plan todo " << todo
-            << ")\n";
-  if (argc > 2) {
-    std::cerr << "warning: ignoring arguments for '" << subcommand << "':";
-    for (int i = 2; i < argc; ++i) {
-      std::cerr << " " << argv[i];
-    }
-    std::cerr << "\n";
-  }
-  return kExitUsage;
-}
 
 // Scans argv[2..] for the bench flags (--suite/--out/--occupancy and the
 // todo-36 occupancy-only flags --kernel/--target/--shape/--threads; --help
@@ -1499,7 +2248,12 @@ int main(int argc, char **argv) {
     return runCompile(options);
   }
   if (subcommand == "explore") {
-    return notImplemented("explore", 37, argc, argv);
+    ExploreOptions options;
+    if (!scanExploreArgs(argc, argv, options)) {
+      printUsage(std::cerr);
+      return kExitUsage;
+    }
+    return runExplore(options);
   }
   if (subcommand == "bench") {
     kernelh::bench::BenchFlags flags;

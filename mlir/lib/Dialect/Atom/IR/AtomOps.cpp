@@ -18,6 +18,41 @@
 
 #include "llvm/ADT/STLExtras.h"
 
+// The generated `type($results)` directive for LoopForOp cannot parse an
+// EMPTY result list (ODS lowers it to parseTypeList, which requires >= 1
+// element - the asm parser's Delimiter::None). Zero-iter-args loops - the
+// common kernel shape - print `iter_args() -> ()` and must round-trip, so
+// the result types use this custom `( type-list? )` directive instead.
+// Defined at global scope because the generated LoopForOp::parse/print call
+// them unqualified from outside the atom namespace.
+mlir::ParseResult parseAtomLoopResults(mlir::OpAsmParser &parser,
+                                       llvm::SmallVectorImpl<mlir::Type> &types) {
+  if (parser.parseLParen())
+    return mlir::failure();
+  if (succeeded(parser.parseOptionalRParen()))
+    return mlir::success();
+  do {
+    mlir::Type type;
+    if (parser.parseType(type))
+      return mlir::failure();
+    types.push_back(type);
+  } while (succeeded(parser.parseOptionalComma()));
+  return parser.parseRParen();
+}
+
+void printAtomLoopResults(mlir::OpAsmPrinter &printer, mlir::Operation *,
+                          mlir::TypeRange types) {
+  printer << "(";
+  bool first = true;
+  for (mlir::Type type : types) {
+    if (!first)
+      printer << ", ";
+    first = false;
+    printer << type;
+  }
+  printer << ")";
+}
+
 #define GET_OP_CLASSES
 #include "kernelh/Dialect/Atom/IR/AtomOps.cpp.inc"
 #include "kernelh/Dialect/Atom/IR/AtomOpsEnums.cpp.inc"

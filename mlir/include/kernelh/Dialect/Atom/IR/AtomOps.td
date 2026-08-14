@@ -181,7 +181,7 @@ def Atom_LoopForOp : Atom_Op<"loop_for",
   let results = (outs Variadic<AnyType>:$results);
   let regions = (region SizedRegion<1>:$region);
   let assemblyFormat = [{
-    $lb `to` $ub `step` $step `iter_args` `(` $iter_args `)` `->` `(` type($results) `)` $region attr-dict
+    $lb `to` $ub `step` $step `iter_args` `(` $iter_args `)` `->` custom<AtomLoopResults>(type($results)) $region attr-dict
   }];
   let hasVerifier = 1;
 }
