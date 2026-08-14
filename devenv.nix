@@ -39,6 +39,17 @@ in
     # CUTLASS headers: try cudaPackages_12_9.cutlass FIRST; if that attribute does not
     # exist (nix eval error), use top-level pkgs.cutlass instead, and record which was used
     cudaPackages_12_9.cutlass
+    # TeX Live for the LaTeX technical report (docs/report.tex). Focused combine:
+    # scheme-small provides the pdflatex engine + core LaTeX; the individual packages
+    # add TikZ diagrams (tikz-cd), PGFPlots charts, biblatex+biber bibliography, and
+    # the table/listings styling used by the report. All attribute names verified to
+    # exist in this nixpkgs (devenv-nixpkgs-patched) via nix eval probes.
+    (texlive.combine {
+      inherit (texlive)
+        scheme-small latexmk biber biblatex pgfplots tikz-cd pgf
+        booktabs listings hyperref xcolor geometry amsmath amsfonts
+        csquotes microtype multirow float cleveref;
+    })
   ];
 
   env = {

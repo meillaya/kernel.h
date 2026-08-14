@@ -12,3 +12,17 @@ cache/
 # Planner / agent state
 .omo/
 .codegraph
+
+# LaTeX build artifacts (docs/report.pdf is a build artifact — not committed)
+docs/*.aux
+docs/*.bbl
+docs/*.blg
+docs/*.bcf
+docs/*.fdb_latexmk
+docs/*.fls
+docs/*.log
+docs/*.out
+docs/*.toc
+docs/*.run.xml
+docs/*.synctex.gz
+docs/*.pdf

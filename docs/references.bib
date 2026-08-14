@@ -1,0 +1,101 @@
+% kernel.h technical report — bibliography
+% All arXiv IDs verified against arxiv.org (fetched 2026-08-14).
+% Real projects cited inline are entered as @misc entries with their canonical URLs.
+
+@inproceedings{mlir2021,
+  author    = {Lattner, Chris and Amini, Mehdi and Bondhugula, Uday and Riddle, Albert and Cohen, Albert and Shpeisman, Tatiana and Davis, Andy and Vasilache, Nicolas and Zinenko, Oleksandr},
+  title     = {{MLIR}: Scaling Compiler Infrastructure for Domain Specific Computation},
+  booktitle = {2021 IEEE/ACM International Symposium on Code Generation and Optimization (CGO)},
+  year      = {2021},
+  pages     = {2--14},
+  doi       = {10.1109/CGO51591.2021.9370308},
+  eprint    = {2002.11054},
+  eprinttype= {arXiv},
+  note      = {arXiv:2002.11054}
+}
+
+@article{roofline2009,
+  author  = {Williams, Samuel and Waterman, Andrew and Patterson, David},
+  title   = {Roofline: An Insightful Visual Performance Model for Multicore Architectures},
+  journal = {Communications of the ACM},
+  volume  = {52},
+  number  = {4},
+  pages   = {65--76},
+  year    = {2009},
+  doi     = {10.1145/1498765.1498785},
+  note    = {CACM 52(4) — not arXiv; cited by DOI}
+}
+
+@inproceedings{flashattn2022,
+  author    = {Dao, Tri and Fu, Daniel Y. and Ermon, Stefano and Rudra, Atri and R{\'e}, Christopher},
+  title     = {{FlashAttention}: Fast and Memory-Efficient Exact Attention with {IO}-Awareness},
+  booktitle = {Advances in Neural Information Processing Systems 35 (NeurIPS 2022)},
+  year      = {2022},
+  eprint    = {2205.14135},
+  eprinttype= {arXiv},
+  note      = {arXiv:2205.14135}
+}
+
+@inproceedings{flashattn2,
+  author    = {Dao, Tri},
+  title     = {{FlashAttention}-2: Faster Attention with Better Parallelism and Work Partitioning},
+  booktitle = {International Conference on Learning Representations (ICLR)},
+  year      = {2024},
+  eprint    = {2307.08691},
+  eprinttype= {arXiv},
+  note      = {arXiv:2307.08691}
+}
+
+@inproceedings{tiramisu2019,
+  author    = {Baghdadi, Riyadh and Ray, Jessica and Romdhane, Malek Ben and Del Sozzo, Emanuele and Akkas, Abdurrahman and Zhang, Yunming and Suriana, Patricia and Kamil, Shoaib and Amarasinghe, Saman},
+  title     = {Tiramisu: A Polyhedral Compiler for Expressing Fast and Portable Code},
+  booktitle = {2019 IEEE/ACM International Symposium on Code Generation and Optimization (CGO)},
+  year      = {2019},
+  pages     = {193--205},
+  doi       = {10.1109/CGO.2019.8661197},
+  eprint    = {1804.10694},
+  eprinttype= {arXiv},
+  note      = {arXiv:1804.10694}
+}
+
+@inproceedings{llvm2004,
+  author    = {Lattner, Chris and Adve, Vikram},
+  title     = {{LLVM}: A Compilation Framework for Lifelong Program Analysis \& Transformation},
+  booktitle = {Proceedings of the 2004 International Symposium on Code Generation and Optimization (CGO)},
+  year      = {2004},
+  pages     = {75--86},
+  doi       = {10.1109/CGO.2004.1281665},
+  publisher = {IEEE}
+}
+
+@misc{cutlass_github,
+  author = {{NVIDIA}},
+  title  = {{CUTLASS}: {CUDA} Templates for Linear Algebra Subroutines},
+  year   = {2025},
+  howpublished = {\url{https://github.com/NVIDIA/cutlass}},
+  note   = {Open-source library; v3+ features the CuTe layout/tiling backend}
+}
+
+@misc{rocm_github,
+  author = {{AMD}},
+  title  = {{ROCm}: Open Software Platform for {GPU}-Centric Computing},
+  year   = {2025},
+  howpublished = {\url{https://github.com/ROCm/ROCm}},
+  note   = {Includes the ROCm/ROCm\#6349 gfx1101 WMMA correctness tracking issue}
+}
+
+@misc{cublas_docs,
+  author = {{NVIDIA}},
+  title  = {{cuBLAS}: {CUDA} Basic Linear Algebra Subroutine Library},
+  year   = {2025},
+  howpublished = {\url{https://docs.nvidia.com/cuda/cublas/}},
+  note   = {Vendor GEMM baseline used by the cross-vendor benchmark harness}
+}
+
+@misc{rocblas_docs,
+  author = {{AMD}},
+  title  = {{rocBLAS}: {ROCm} Basic Linear Algebra Subroutine Library},
+  year   = {2025},
+  howpublished = {\url{https://github.com/ROCm/rocBLAS}},
+  note   = {Local vendor GEMM baseline on the RX 7800 XT}
+}
