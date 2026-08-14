@@ -1,0 +1,80 @@
+// Fused-GEMM-with-epilogue fixture for the default pipeline (plan todo 19).
+//
+// A high-level matmul-with-epilogue-shaped kernel that exercises EVERY pass
+// of the pinned order (canonicalize, cse, fuse, tile, promote-shared,
+// vectorize, unroll) when --run-default-pipeline runs. Per-stage observables
+// (pinned by test/lit/passes/pipeline_order.test):
+//
+//   canonicalize  - the consumer's trailing add(x, const 0.0) identity is
+//                   elided (dump 01 has one atom.add, input has two).
+//   cse           - the consumer's two identical mul(tmp, A) collapse to one
+//                   (dump 02 has one atom.mul, dump 01 has two).
+//   fuse          - the producer/consumer epilogue pair (same [0,8) domain,
+//                   rank-1 intermediate %v3) collapses into one loop; the
+//                   tensor<8xf32> intermediate vanishes.
+//   tile          - the outermost [0,64) domain loop becomes the block tile
+//                   loop: atom.block_id appears, memory indices reaching the
+//                   tile induction are boundary-guarded with atom.select.
+//   promote-shared- A and B (tile-shaped 64x32 / 32x64) are staged through
+//                   static shared: atom.alloc_shared + atom.copy + barrier.
+//                   The epilogue ALSO re-reads A, so that load becomes a
+//                   SHARED load too.
+//   vectorize     - the fused epilogue chain (load C -> load A -> mul -> add
+//                   -> store F) widens to vector<8xf32>: atom.load_vec
+//                   appears, including a vector load from the promoted
+//                   shared buffer.
+//   unroll        - the epilogue loop (trip 8, unroll 8) is fully unrolled:
+//                   8 sequential copies, the loop erased.
+//
+// Kernel args: %v0 A (M x K), %v1 B (K x N), %v2 C (M x N, gemm output),
+// %v3 tmp (rank-1 fuse intermediate), %v4 F (M x N, epilogue output).
+// M = N = 64 = BM = BN, K = 32 = BK: the problem is ONE tile, so the staged
+// tensors ARE the tiles (atom.copy requires identical shapes).
+atom.kernel @fused_gemm(%v0: tensor<64x32xf32, global>, %v1: tensor<32x64xf32, global>, %v2: tensor<64x64xf32, global>, %v3: tensor<8xf32, global>, %v4: tensor<64x64xf32, global>) {
+  tile = [64, 64, 32]
+  map_blocks = true
+  map_warps = true
+  use_shared_memory = true
+  vector_width = 8
+  unroll = 8
+  shape = {k = 32, m = 64, n = 64}
+  %v5 = atom.const 0 : index
+  %v6 = atom.const 64 : index
+  %v7 = atom.const 1 : index
+  %v8 = atom.const 32 : index
+  %v9 = atom.const 8 : index
+  %v10 = atom.const 0.0 : f32
+  atom.loop_for %v5 to %v6 step %v7 iter_args() -> () {
+    ^bb0(%v11: index):
+      atom.loop_for %v5 to %v6 step %v7 iter_args() -> () {
+        ^bb0(%v12: index):
+          %v13 = atom.loop_for %v5 to %v8 step %v7 iter_args(%v10) -> (f32) {
+            ^bb0(%v14: index, %v15: f32):
+              %v16 = atom.load %v0[%v11, %v14] : tensor<64x32xf32, global>
+              %v17 = atom.load %v1[%v14, %v12] : tensor<32x64xf32, global>
+              %v18 = atom.fma %v16, %v17, %v15 : f32
+              atom.yield %v18 : f32
+          }
+          atom.store %v13, %v2[%v11, %v12] : tensor<64x64xf32, global>
+          atom.yield
+      }
+      atom.loop_for %v5 to %v9 step %v7 iter_args() -> () {
+        ^bb0(%v19: index):
+          %v20 = atom.load %v2[%v11, %v19] : tensor<64x64xf32, global>
+          atom.store %v20, %v3[%v19] : tensor<8xf32, global>
+          atom.yield
+      }
+      atom.loop_for %v5 to %v9 step %v7 iter_args() -> () {
+        ^bb0(%v21: index):
+          %v22 = atom.load %v3[%v21] : tensor<8xf32, global>
+          %v23 = atom.load %v0[%v11, %v21] : tensor<64x32xf32, global>
+          %v24 = atom.mul %v22, %v23 : f32
+          %v25 = atom.mul %v22, %v23 : f32
+          %v26 = atom.add %v24, %v25 : f32
+          %v27 = atom.add %v26, %v10 : f32
+          atom.store %v27, %v4[%v11, %v21] : tensor<64x64xf32, global>
+          atom.yield
+      }
+      atom.yield
+  }
+}

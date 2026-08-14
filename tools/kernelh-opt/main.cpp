@@ -13,6 +13,7 @@
 //      --verify                explicit standalone structural verification
 //      --print-atom            print the module as ".atom" text to stdout
 //      --run-passes=<a,b,c>    run the pass pipeline in order
+//      --run-default-pipeline  run the pinned canonical pipeline order
 //      --dump-dir <dir>        per-pass dumps: 00-input.atom, NN-<pass>.atom
 //      --atom-target <t>       device limits table target for verification
 //                              (gfx1101|sm_80; default gfx1101)
@@ -24,6 +25,7 @@
 #include "kernelh/ir/pass_manager.hpp"
 #include "kernelh/ir/printer.hpp"
 #include "kernelh/ir/verifier.hpp"
+#include "kernelh/passes/pipeline.hpp"
 
 #include "mlir/InitAllDialects.h"
 #include "mlir/InitAllExtensions.h"
@@ -45,6 +47,7 @@ struct AtomOptions {
   bool verify = false;
   bool printAtom = false;
   bool hasRunPasses = false;
+  bool runDefaultPipeline = false;
   bool hasDumpDir = false;
   std::string inputFile;
   std::string passPipeline;
@@ -56,7 +59,8 @@ enum class ScanResult { NoAtom, AtomMode, UsageError };
 
 bool isAtomFlag(const std::string &arg) {
   return arg == "--load-atom" || arg == "--parse-atom" || arg == "--verify" ||
-         arg == "--print-atom" || arg.rfind("--run-passes", 0) == 0 ||
+         arg == "--print-atom" || arg == "--run-default-pipeline" ||
+         arg.rfind("--run-passes", 0) == 0 ||
          arg.rfind("--dump-dir", 0) == 0 ||
          arg.rfind("--atom-target", 0) == 0;
 }
@@ -68,6 +72,7 @@ void printUsage() {
             << "  --verify               explicit structural verification\n"
             << "  --print-atom           print the module as .atom text\n"
             << "  --run-passes=<a,b,c>   run the pass pipeline in order\n"
+            << "  --run-default-pipeline run the pinned canonical pipeline\n"
             << "  --dump-dir <dir>       per-pass dumps (needs --run-passes)\n"
             << "  --atom-target <t>      device limits target for the verify\n"
             << "                         pass (gfx1101|sm_80; default gfx1101)\n"
@@ -129,6 +134,8 @@ ScanResult scanAtomOptions(int argc, char **argv, AtomOptions &options) {
         return ScanResult::UsageError;
       }
       options.hasRunPasses = true;
+    } else if (arg == "--run-default-pipeline") {
+      options.runDefaultPipeline = true;
     } else if (arg == "--dump-dir" || arg.rfind("--dump-dir=", 0) == 0) {
       if (!takeValue(argc, argv, i, arg, "--dump-dir", options.dumpDir)) {
         return ScanResult::UsageError;
@@ -158,8 +165,15 @@ ScanResult scanAtomOptions(int argc, char **argv, AtomOptions &options) {
                  "--parse-atom (stdin)\n";
     return ScanResult::UsageError;
   }
-  if (options.hasDumpDir && !options.hasRunPasses) {
-    std::cerr << "error: --dump-dir requires --run-passes\n";
+  if (options.hasRunPasses && options.runDefaultPipeline) {
+    std::cerr << "error: --run-passes and --run-default-pipeline are "
+                 "conflicting pipeline selectors\n";
+    return ScanResult::UsageError;
+  }
+  if (options.hasDumpDir && !options.hasRunPasses &&
+      !options.runDefaultPipeline) {
+    std::cerr << "error: --dump-dir requires --run-passes or "
+                 "--run-default-pipeline\n";
     return ScanResult::UsageError;
   }
   return ScanResult::AtomMode;
@@ -223,6 +237,18 @@ int runAtomMode(const AtomOptions &options) {
         module, options.passPipeline,
         options.hasDumpDir ? std::string_view(options.dumpDir)
                            : std::string_view());
+    if (!result) {
+      std::cerr << "error: " << result.error() << "\n";
+      return 1;
+    }
+  }
+
+  if (options.runDefaultPipeline) {
+    // The pinned canonical order (Metis G3), run via the same global registry
+    // (lib/passes/pipeline.cpp). Same dump behavior as --run-passes.
+    const auto result = kernelh::passes::runDefaultPipeline(
+        module, options.hasDumpDir ? std::string_view(options.dumpDir)
+                                   : std::string_view());
     if (!result) {
       std::cerr << "error: " << result.error() << "\n";
       return 1;

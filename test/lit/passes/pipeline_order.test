@@ -1,0 +1,139 @@
+// Pipeline order lock (plan todo 19): --run-default-pipeline runs the pinned
+// canonical order (canonicalize, cse, fuse, tile, promote-shared, vectorize,
+// unroll) over the fused_gemm_hl.atom fixture, dumping one .atom per stage.
+//
+// ORDER IS PROVEN BY STAGE MARKERS, not just file names: each dump must show
+// the effect of exactly the passes run so far:
+//   00-input:           the raw 5-loop kernel (2 muls, 2 adds, no id ops)
+//   01-canonicalize:    the trailing add(x, 0.0) identity is elided (2 -> 1)
+//   02-cse:             the duplicate mul is merged (2 -> 1)
+//   03-fuse:            the epilogue producer/consumer pair is one loop and
+//                       the tensor<8xf32> intermediate is gone (5 -> 4 loops)
+//   04-tile:            atom.block_id appears; the fused chain survives with
+//                       boundary-guarded indices (atom.select)
+//   05-promote-shared:  atom.alloc_shared / atom.copy / atom.barrier appear
+//                       and no global loads of the staged tensors remain
+//   06-vectorize:       atom.load_vec appears - incl. a vector load from the
+//                       promoted shared buffer (vectorization AFTER
+//                       promotion, width 8)
+//   07-unroll:          the epilogue loop (trip 8, factor 8) is fully
+//                       unrolled: 16 load_vec in 8 sequential copies, zero
+//                       iter_args loops 3 -> 2 (the epilogue loop is gone)
+// Every dump must re-parse AND verify (each stage's output stays valid input
+// for the next), and the final output verifies clean.
+
+// RUN: rm -rf %t.dump
+// RUN: kernelh-opt --load-atom %S/../../fixtures/passes/fused_gemm_hl.atom --run-default-pipeline --dump-dir %t.dump
+// RUN: test -f %t.dump/00-input.atom
+// RUN: test -f %t.dump/01-canonicalize.atom
+// RUN: test -f %t.dump/02-cse.atom
+// RUN: test -f %t.dump/03-fuse.atom
+// RUN: test -f %t.dump/04-tile.atom
+// RUN: test -f %t.dump/05-promote-shared.atom
+// RUN: test -f %t.dump/06-vectorize.atom
+// RUN: test -f %t.dump/07-unroll.atom
+// RUN: test "$(ls %t.dump | wc -l)" -eq 8
+// Loop-count reductions: 02 has the 5 input loops; 03 has 4 after fusion.
+// RUN: test "$(grep -c 'atom.loop_for' %t.dump/02-cse.atom)" -eq 5
+// RUN: test "$(grep -c 'atom.loop_for' %t.dump/03-fuse.atom)" -eq 4
+// Zero-iter_args loops: 06 has tile + N + epilogue; 07 has tile + N (the
+// epilogue loop was fully unrolled).
+// RUN: test "$(grep -c 'iter_args() -> ()' %t.dump/06-vectorize.atom)" -eq 3
+// RUN: test "$(grep -c 'iter_args() -> ()' %t.dump/07-unroll.atom)" -eq 2
+// The fully unrolled epilogue chain: 8 copies x 2 load_vec (C + A-shared).
+// RUN: test "$(grep -c 'atom.load_vec' %t.dump/07-unroll.atom)" -eq 16
+// Every stage output re-parses and verifies.
+// RUN: kernelh-opt --load-atom %t.dump/00-input.atom --verify
+// RUN: kernelh-opt --load-atom %t.dump/01-canonicalize.atom --verify
+// RUN: kernelh-opt --load-atom %t.dump/02-cse.atom --verify
+// RUN: kernelh-opt --load-atom %t.dump/03-fuse.atom --verify
+// RUN: kernelh-opt --load-atom %t.dump/04-tile.atom --verify
+// RUN: kernelh-opt --load-atom %t.dump/05-promote-shared.atom --verify
+// RUN: kernelh-opt --load-atom %t.dump/06-vectorize.atom --verify
+// RUN: kernelh-opt --load-atom %t.dump/07-unroll.atom --verify
+// Stage markers per dump.
+// RUN: FileCheck %s --check-prefix=IN --input-file %t.dump/00-input.atom
+// RUN: FileCheck %s --check-prefix=CAN --input-file %t.dump/01-canonicalize.atom
+// RUN: FileCheck %s --check-prefix=CSE --input-file %t.dump/02-cse.atom
+// RUN: FileCheck %s --check-prefix=FUSED --input-file %t.dump/03-fuse.atom
+// RUN: FileCheck %s --check-prefix=TILED --input-file %t.dump/04-tile.atom
+// RUN: FileCheck %s --check-prefix=PROMOTED --input-file %t.dump/05-promote-shared.atom
+// RUN: FileCheck %s --check-prefix=VECTORIZED --input-file %t.dump/06-vectorize.atom
+// RUN: FileCheck %s --check-prefix=UNROLLED --input-file %t.dump/07-unroll.atom
+// No global loads of the staged A/B tensors survive promotion.
+// RUN: not grep -E 'atom\.load [^:]*: tensor<(64x32|32x64)xf32, global>' %t.dump/05-promote-shared.atom
+// No load/store of the tensor<8xf32> intermediate survives fusion (the
+// whole-file grep, unlike CHECK-NOT, is not position-limited by the label).
+// RUN: not grep -E 'atom\.(load|store) [^:]*: tensor<8xf32' %t.dump/03-fuse.atom
+// The pinned order end-to-end: --load-atom verifies the input, the pipeline
+// runs, exit 0.
+// RUN: kernelh-opt --load-atom %S/../../fixtures/passes/fused_gemm_hl.atom --run-default-pipeline --verify
+
+// IN-LABEL: atom.kernel @fused_gemm(
+// The two epilogue muls and two adds are consecutive lines in the consumer.
+// IN-COUNT-2: atom.mul
+// IN-COUNT-2: atom.add
+// IN-NOT: atom.block_id
+// IN-NOT: atom.alloc_shared
+// IN-NOT: atom.load_vec
+
+// CAN-LABEL: atom.kernel @fused_gemm(
+// canonicalize only elides the add(x, 0.0) identity: still 2 muls, 1 add.
+// CAN-COUNT-2: atom.mul
+// CAN-COUNT-1: atom.add
+
+// CSE-LABEL: atom.kernel @fused_gemm(
+// cse merges the two identical muls into one.
+// CSE-COUNT-1: atom.mul
+// CSE-COUNT-1: atom.add
+
+// FUSED-LABEL: atom.kernel @fused_gemm(
+// The producer/consumer pair collapsed: the fused loop body is the pure
+// load C -> load A -> mul -> add -> store F chain, and the tensor<8xf32>
+// intermediate is gone from the whole file.
+// FUSED: %{{.*}} = atom.load %{{.*}}[%{{.*}}, %{{.*}}] : tensor<64x64xf32, global>
+// FUSED: %{{.*}} = atom.load %{{.*}}[%{{.*}}, %{{.*}}] : tensor<64x32xf32, global>
+// FUSED: %{{.*}} = atom.mul %{{.*}}, %{{.*}} : f32
+// FUSED: %{{.*}} = atom.add %{{.*}}, %{{.*}} : f32
+// FUSED: atom.store %{{.*}}, %{{.*}}[%{{.*}}, %{{.*}}] : tensor<64x64xf32, global>
+// FUSED-NOT: tensor<8xf32
+
+// TILED-LABEL: atom.kernel @fused_gemm(
+// Tiling introduced block-level mapping: atom.block_id and the boundary
+// guard (atom.select) appear, and the fused chain (still one mul) survives
+// inside the tiled loop with the guarded indices.
+// TILED: atom.block_id
+// TILED: atom.select
+// TILED: %{{.*}} = atom.load %{{.*}}[%{{.*}}, %{{.*}}] : tensor<64x64xf32, global>
+// TILED: %{{.*}} = atom.load %{{.*}}[%{{.*}}, %{{.*}}] : tensor<64x32xf32, global>
+// TILED: %{{.*}} = atom.mul %{{.*}}, %{{.*}} : f32
+// TILED: %{{.*}} = atom.add %{{.*}}, %{{.*}} : f32
+// TILED: atom.store %{{.*}}, %{{.*}}[%{{.*}}, %{{.*}}] : tensor<64x64xf32, global>
+
+// PROMOTED-LABEL: atom.kernel @fused_gemm(
+// Promotion ran AFTER tiling: the tile-shaped static buffers, the
+// whole-tile copies and the barrier appear in the block-tile scope, and the
+// compute now loads A/B from shared.
+// PROMOTED: atom.alloc_shared : tensor<64x32xf32, shared>
+// PROMOTED: atom.alloc_shared : tensor<32x64xf32, shared>
+// PROMOTED: atom.copy
+// PROMOTED: atom.barrier
+// PROMOTED: atom.load %{{.*}}[%{{.*}}, %{{.*}}] : tensor<64x32xf32, shared>
+// PROMOTED: atom.load %{{.*}}[%{{.*}}, %{{.*}}] : tensor<32x64xf32, shared>
+
+// VECTORIZED-LABEL: atom.kernel @fused_gemm(
+// Vectorization ran AFTER promotion: the fused chain widens to width 8 -
+// atom.load_vec from the promoted shared buffer and from global, the
+// vector mul/add, and atom.store_vec to F.
+// VECTORIZED: %{{.*}} = atom.load_vec %{{.*}}[%{{.*}}, %{{.*}}] : tensor<64x64xf32, global>, vector<8xf32>
+// VECTORIZED: %{{.*}} = atom.load_vec %{{.*}}[%{{.*}}, %{{.*}}] : tensor<64x32xf32, shared>, vector<8xf32>
+// VECTORIZED: %{{.*}} = atom.mul %{{.*}}, %{{.*}} : vector<8xf32>
+// VECTORIZED: %{{.*}} = atom.add %{{.*}}, %{{.*}} : vector<8xf32>
+// VECTORIZED: atom.store_vec %{{.*}}, %{{.*}}[%{{.*}}, %{{.*}}] : tensor<64x64xf32, global>, vector<8xf32>
+
+// UNROLLED-LABEL: atom.kernel @fused_gemm(
+// Unroll ran LAST: the fully unrolled epilogue chain keeps the vectorized
+// form (8 sequential copies - the 16-load_vec grep above), and the final
+// store is a vector store to F.
+// UNROLLED: %{{.*}} = atom.load_vec %{{.*}}[%{{.*}}, %{{.*}}] : tensor<64x64xf32, global>, vector<8xf32>
+// UNROLLED: atom.store_vec %{{.*}}, %{{.*}}[%{{.*}}, %{{.*}}] : tensor<64x64xf32, global>, vector<8xf32>
