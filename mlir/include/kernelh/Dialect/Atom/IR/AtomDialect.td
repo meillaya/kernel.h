@@ -12,7 +12,6 @@
 //   vector<WxE>     -> vector<WxE>
 //
 // This file is part of kernel.h.
-// SPDX-License-Identifier: MIT
 //===----------------------------------------------------------------------===//
 
 #ifndef KERNELH_ATOM_DIALECT

@@ -15,7 +15,6 @@
 // result.
 //
 // This file is part of kernel.h.
-// SPDX-License-Identifier: MIT
 //===----------------------------------------------------------------------===//
 
 #include "kernelh/compiler/emitter.hpp"

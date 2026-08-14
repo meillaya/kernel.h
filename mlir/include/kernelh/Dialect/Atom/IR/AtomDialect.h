@@ -5,7 +5,6 @@
 // as the bridge to the MLIR GPU dialect.
 //
 // This file is part of kernel.h.
-// SPDX-License-Identifier: MIT
 //===----------------------------------------------------------------------===//
 
 #ifndef KERNELH_ATOM_DIALECT_H

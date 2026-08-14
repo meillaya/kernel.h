@@ -5,7 +5,6 @@
 // mechanical translation.
 //
 // This file is part of kernel.h.
-// SPDX-License-Identifier: MIT
 //===----------------------------------------------------------------------===//
 
 include "mlir/IR/OpBase.td"

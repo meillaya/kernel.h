@@ -6,7 +6,6 @@
 // `hasCustomAssemblyFormat` / `hasVerifier` are implemented here.
 //
 // This file is part of kernel.h.
-// SPDX-License-Identifier: MIT
 //===----------------------------------------------------------------------===//
 
 #include "kernelh/Dialect/Atom/IR/AtomDialect.h"
