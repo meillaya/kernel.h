@@ -1,8 +1,8 @@
 # Catch2 v3 unit tests (own main() in main.cpp).
 include(Catch)
 
-add_executable(kernelh_unit main.cpp gpu_gate_test.cpp)
-target_link_libraries(kernelh_unit PRIVATE Catch2::Catch2)
+add_executable(kernelh_unit main.cpp gpu_gate_test.cpp device_limits_test.cpp)
+target_link_libraries(kernelh_unit PRIVATE Catch2::Catch2 kernelh_compiler)
 
 # Bake the degraded-mode flag path into the binary (path resolved in
 # test/CMakeLists.txt from $ENV{KERNELH_DEGRADED_FLAG}).
