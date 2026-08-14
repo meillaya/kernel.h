@@ -15,10 +15,12 @@
 // Full-GPU path (degraded=false): for each size N:
 //   kernelh compile --kernel gemm --shape m=N,n=N,k=N --target amdgcn-gfx1101
 //     -> gemm.hsaco (todo 24 production driver via std::system; the template
-//        applies the default tile(128,128,32).map_blocks().map_warps().
-//        use_shared_memory() schedule - the CLI has no schedule flags)
+//        applies the default tile(32,32,32).map_blocks() (map_warps OFF)
+//        use_shared_memory() schedule - the CLI has no schedule flags; the
+//        tiled shared-memory GEMM pre-stages its A/B tiles through static
+//        LDS with tid-partitioned staging loops and per-tile barriers)
 //   -> GpuModule::load + get_function("gemm")
-//   -> KernelLaunch grid=ceil(N/128) block=128, 3 rank-2 memref args
+//   -> KernelLaunch grid=ceil(N/32) block=256, 3 rank-2 memref args
 //   -> copy_to_host -> relative Frobenius vs the fp64 CPU reference.
 //
 // Inputs are exact-in-f32 integers (values in [0,64) with products <= 3969);
@@ -72,13 +74,13 @@ inline float fill_b_value(long k, long j) {
   return static_cast<float>((k * 97 + j * 41 + 3) & 63);
 }
 
-// The tile extent applied by the gemm template's default schedule.
+// The tile extent applied by the gemm template's default schedule (BM=32;
+// grid = ceil(M/BM), one 32-row tile per block computed cooperatively by
+// the 256 threads over the columns).
 constexpr long kTile = 32;
 // Launch block = 256 threads: the compiled kernel's max_flat_workgroup_size
-// is 256 (larger blocks are rejected at launch), and with map_warps the
-// tile's 32 rows are partitioned across ceil(256/32)=8 wavefront groups
-// (trip=4). A smaller block underutilizes the device and makes the serial
-// N/K loops latency-bound enough to look like a hang on the 4096^3 case.
+// is 256 (larger blocks are rejected at launch); each thread owns the
+// columns j = tid + it*256 and the per-thread work stays bounded.
 
 // fp64 CPU reference cast to fp32: C[i,j] = sum_k a[i,k] * b[k,j], computed
 // as a rank-1 update (per-row running accumulators) so the inner loop walks
@@ -220,14 +222,12 @@ void assert_degraded_artifacts(long n) {
   const std::vector<char> isa =
       kernelh::test::read_file_bin(outDir + "/gemm.isa");
   const std::string isaText(isa.begin(), isa.end());
-  // The promote-shared stage lowered to real AMDGPU instructions: the
-  // tile-loop barriers surface as s_barrier in the ISA. (The plan's 'ds_'
-  // LDS-traffic probe does not apply to this skeleton: with the serial
-  // skeleton the tile loads stay nested inside the N/K loops, so store-mode
-  // promotion only ALLOCATES the shared buffers without generating shared
-  // loads/stores - the backend then drops the dead globals, leaving the
-  // barrier pair as the observable trace of the shared-memory schedule.)
+  // The template pre-stages its A/B tiles through static LDS (the scan.cpp
+  // pattern), so the compiled kernel carries REAL shared-memory traffic: the
+  // tile-loop barriers surface as s_barrier AND the staging stores + compute
+  // loads surface as ds_* instructions in the AMD ISA.
   REQUIRE(isaText.find("s_barrier") != std::string::npos);
+  REQUIRE(isaText.find("ds_") != std::string::npos);
 }
 
 // Runs a CLI command capturing stdout+stderr into `logPath`; returns the

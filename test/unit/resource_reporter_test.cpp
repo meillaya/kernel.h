@@ -288,19 +288,25 @@ TEST_CASE("resource_reporter_cli_gemm_writes_json", "[resource_reporter]") {
 
   const std::string json = read_text(outDir + "/resources.json");
   REQUIRE_FALSE(json.empty());
-  CHECK(json_int_field(json, "vgpr_count") == 19);
-  CHECK(json_int_field(json, "sgpr_count") == 34);
+  // Snapshot of the REAL tiled shared-memory GEMM (todo-26 fix): the kernel
+  // now pre-stages its A/B tiles through 8 KiB of static LDS, so the
+  // register profile differs from the old serial skeleton (vgpr 41, sgpr 26,
+  // lds 8192). These are the live amdhsa-notes values.
+  CHECK(json_int_field(json, "vgpr_count") == 41);
+  CHECK(json_int_field(json, "sgpr_count") == 26);
   CHECK(json_int_field(json, "wavefront_size") == 32);
-  // Hand-computed occupancy: floor(6144/(19*32)) = 10.
-  CHECK(json_int_field(json, "occupancy_estimate") == 10);
+  CHECK(json_int_field(json, "lds_bytes") == 8192);
+  // Hand-computed occupancy: floor(6144/(41*32)) = 4.
+  CHECK(json_int_field(json, "occupancy_estimate") == 4);
   CHECK(json_string_field(json, "kernel") == "gemm");
   CHECK(json_string_field(json, "target") == "amdgcn-gfx1101");
 }
 
 TEST_CASE("resource_reporter_scan_lds_bytes_positive", "[resource_reporter]") {
-  // GEMM's group_segment_fixed_size is 0 on this pipeline (todo-26 phantom
-  // LDS: staging did not fire for the default config), so the lds_bytes > 0
-  // acceptance uses the SCAN kernel, which stages 3 x 256 f32 (3072 B).
+  // The lds_bytes > 0 acceptance uses the SCAN kernel, which stages 3 x 256
+  // f32 (3072 B) in static LDS. (GEMM now also stages real LDS - 8192 B for
+  // the default 32x32x32 tile - but its value is pinned in the gemm case
+  // above; scan keeps its own distinct 3072-byte assertion.)
   //   AMD:   group_segment_fixed_size == 3072 from the amdhsa notes.
   //   NVIDIA: ptxas registers > 0 AND static shared scan == 3072 (ptxas -v
   //           does not report module-scope .shared, the PTX text does).
