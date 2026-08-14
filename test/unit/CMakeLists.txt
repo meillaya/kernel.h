@@ -25,6 +25,8 @@ add_executable(kernelh_unit
   runtime_integration_test.cpp
   emitter_test.cpp
   backend_test.cpp
+  canary_gpu_test.cpp
+  e2e_vecadd_test.cpp
 )
 target_link_libraries(kernelh_unit PRIVATE Catch2::Catch2
   # WHOLE_ARCHIVE: force-load every pass object so its self-registration
@@ -48,7 +50,11 @@ target_link_libraries(kernelh_unit PRIVATE Catch2::Catch2
 # the printer fixture-comparison tests reading test/fixtures).
 target_compile_definitions(kernelh_unit PRIVATE
   KERNELH_DEGRADED_FLAG="${KERNELH_DEGRADED_FLAG_PATH}"
-  KERNELH_SOURCE_DIR="${CMAKE_SOURCE_DIR}")
+  KERNELH_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+  # The production compile driver (todo 24): the todo-25 e2e/canary tests
+  # shell out to it via std::system, then load the produced HSACO through
+  # kernelh_runtime (see kernelh_compile_util.hpp).
+  KERNELH_BIN="${CMAKE_BINARY_DIR}/tools/kernelh/kernelh")
 
 # The gpu_gate cases mutate the shared flag file; serialize them under -j.
 catch_discover_tests(kernelh_unit
