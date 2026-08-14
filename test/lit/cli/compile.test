@@ -1,0 +1,44 @@
+// End-to-end compile driver tests (plan todo 24): kernelh compile wires the
+// default pipeline (todo 19) -> emitter (todo 21) -> vendor backends
+// (todo 22) IN-PROCESS, writing the full artifact family to --out. Both
+// targets are requested in one invocation; stdout is a deterministic
+// per-artifact summary that FileCheck can pin.
+
+// Both targets -> all six artifacts + a compile-ok line. Write order follows
+// the invocation order (amdgcn isa/hsaco first, then nvptx ptx/cubin).
+// RUN: rm -rf %t.c && kernelh compile --kernel vecadd --shape n=1024 --target amdgcn-gfx1101 --target nvptx-sm_80 --out %t.c --dump-dir %t.c/dumps | FileCheck %s --check-prefix=OK
+// OK: wrote {{.*}}vecadd.atom
+// OK: wrote {{.*}}vecadd.atom.final
+// OK: wrote {{.*}}vecadd.mlir
+// OK: wrote {{.*}}vecadd.isa
+// OK: wrote {{.*}}vecadd.hsaco
+// OK: wrote {{.*}}vecadd.ptx
+// OK: wrote {{.*}}vecadd.cubin
+// OK: compile ok
+
+// Content probes, not just file existence: ELF magic on the blobs, ISA/PTX
+// text markers, the custom-IR + gpu-dialect text artifacts.
+// RUN: test -f %t.c/vecadd.hsaco -a -f %t.c/vecadd.ptx -a -f %t.c/vecadd.isa -a -f %t.c/vecadd.cubin -a -f %t.c/vecadd.atom.final -a -f %t.c/vecadd.mlir
+// RUN: head -c4 %t.c/vecadd.hsaco | od -An -tx1 | grep -q '7f 45 4c 46'
+// RUN: head -c4 %t.c/vecadd.cubin | od -An -tx1 | grep -q '7f 45 4c 46'
+// RUN: grep -qE 's_waitcnt|v_add' %t.c/vecadd.isa
+// RUN: grep -q '\.visible \.entry vecadd(' %t.c/vecadd.ptx
+
+// The pipeline writes 8 dumps (00-input + 7 passes) and every dump re-parses
+// AND structural-verifies through kernelh-opt (Oracle B6).
+// RUN: test $(ls %t.c/dumps | grep -c 'atom') -ge 8
+// RUN: for f in %t.c/dumps/*.atom; do kernelh-opt --load-atom "$f" --verify || exit 1; done
+
+// Re-entry: the 00-input dump compiles again as an --input source.
+// RUN: rm -rf %t.r && kernelh compile --input %t.c/dumps/00-input.atom --target amdgcn-gfx1101 --out %t.r
+// RUN: test -f %t.r/00-input.atom.final -a -f %t.r/00-input.hsaco
+
+// Bogus --target: device_limits_for's error PLUS the CLI's valid-targets
+// listing (both tokens present), exit 1.
+// RUN: not kernelh compile --kernel vecadd --shape n=1024 --target bogus-target --out %t.b 2>&1 | FileCheck %s --check-prefix=BOGUS
+// RUN: kernelh compile --kernel vecadd --shape n=1024 --target bogus-target --out %t.b; test $? -eq 1
+// BOGUS: error: unknown device target
+// BOGUS: error: valid --target values: amdgcn-gfx1101, nvptx-sm_80
+
+// No arguments at all -> usage + exit 2.
+// RUN: kernelh compile; test $? -eq 2
