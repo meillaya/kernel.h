@@ -1,0 +1,54 @@
+// Test the kernelh CLI driver (plan todo 12): the subcommand skeleton
+// compile/explore/bench/tune. The compile path links the kernelh libraries
+// IN-PROCESS (Metis G37) - parse/emit -> verify -> write .atom text; the
+// --kernel path exercises the todo-11 vecadd registry template.
+
+// --help lists all four subcommands (order matters: the acceptance contract
+// greps `compile.*explore.*bench.*tune` on one line).
+// RUN: kernelh --help | FileCheck %s --check-prefix=HELP
+
+// Registry emit -> verify (gfx1101) -> <out>/vecadd.atom; the written file
+// re-parses and round-trips byte-identically through a second compile.
+// RUN: kernelh compile --kernel vecadd --shape n=1024 --target amdgcn-gfx1101 --out %t.out
+// RUN: test -f %t.out/vecadd.atom
+// RUN: kernelh compile --input %t.out/vecadd.atom --target amdgcn-gfx1101 --out %t.out2
+// RUN: diff %t.out/vecadd.atom %t.out2/vecadd.atom
+
+// --dump-dir writes 00-input.atom through the pass-manager dump hook (the
+// pipeline is empty at this stage) and that dump re-parses.
+// RUN: kernelh compile --kernel vecadd --shape n=1024 --target amdgcn-gfx1101 --out %t.dump --dump-dir %t.dump/dumps
+// RUN: test -f %t.dump/dumps/00-input.atom
+// RUN: kernelh compile --input %t.dump/dumps/00-input.atom --target amdgcn-gfx1101 --out %t.dump2
+
+// explore/bench/tune are stubs: not-implemented message, exit 2.
+// RUN: kernelh bench; test $? -eq 2
+// RUN: kernelh explore; test $? -eq 2
+// RUN: kernelh tune; test $? -eq 2
+
+// Unknown subcommand: usage on stderr, exit 2. (`not` inverts the non-zero
+// exit so the pipeline verdict is FileCheck's; the following RUN line pins the
+// exact code.)
+// RUN: not kernelh bogus 2>&1 | FileCheck %s --check-prefix=UNKNOWN
+// RUN: kernelh bogus; test $? -eq 2
+
+// Nonexistent input: clean error, exit 1 (not a crash).
+// RUN: not kernelh compile --input /nonexistent.atom --target amdgcn-gfx1101 --out %t.nope 2>&1 | FileCheck %s --check-prefix=NOFILE
+// RUN: kernelh compile --input /nonexistent.atom --target amdgcn-gfx1101 --out %t.nope; test $? -eq 1
+
+// Verify-failing fixture: diagnostics on stderr, exit 1. The fixture needs
+// 131072 bytes of shared memory; the sm_80 LDS budget is 49152 bytes (todo 10
+// device-limits table).
+// RUN: not kernelh compile --input %S/../fixtures/invalid_shared_overflow.atom --target nvptx-sm_80 --out %t.bad 2>&1 | FileCheck %s --check-prefix=LDS
+// RUN: kernelh compile --input %S/../fixtures/invalid_shared_overflow.atom --target nvptx-sm_80 --out %t.bad; test $? -eq 1
+
+// Bogus --target: device_limits_for's clean error naming the token, exit 1.
+// RUN: not kernelh compile --kernel vecadd --shape n=1024 --target amdgcn-bogus --out %t.badtarget 2>&1 | FileCheck %s --check-prefix=TARGET
+// RUN: kernelh compile --kernel vecadd --shape n=1024 --target amdgcn-bogus --out %t.badtarget; test $? -eq 1
+
+// HELP: kernelh - kernel.h command-line driver (compile/explore/bench/tune)
+// HELP: usage: kernelh <compile|explore|bench|tune> [options]
+// UNKNOWN: error: unknown subcommand 'bogus'
+// NOFILE: error: cannot open input file '/nonexistent.atom'
+// LDS: error: shared memory usage
+// LDS: exceeds the 49152-byte LDS limit
+// TARGET: error: unknown device target

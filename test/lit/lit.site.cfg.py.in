@@ -11,6 +11,7 @@
 #     lit test/lit
 
 config.kernelh_opt_bin = "@KERNELH_OPT_BIN@"
+config.kernelh_bin = "@KERNELH_BIN@"
 config.filecheck_bin = "@KERNELH_FILECHECK_BINARY@"
 config.test_source_root = "@KERNELH_LIT_SOURCE_DIR@"
 config.test_exec_root = "@KERNELH_LIT_BINARY_DIR@"

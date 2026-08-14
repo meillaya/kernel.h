@@ -14,6 +14,8 @@ find_program(KERNELH_FILECHECK_BINARY NAMES FileCheck filecheck REQUIRED)
 # kernelh-opt output location (add_mlir_tool in tools/kernelh-opt, layout
 # verified in todo 4: build/tools/kernelh-opt/kernelh-opt).
 set(KERNELH_OPT_BIN "${CMAKE_BINARY_DIR}/tools/kernelh-opt/kernelh-opt")
+# kernelh CLI driver output location (tools/kernelh, plan todo 12).
+set(KERNELH_BIN "${CMAKE_BINARY_DIR}/tools/kernelh/kernelh")
 set(KERNELH_LIT_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}")
 set(KERNELH_LIT_BINARY_DIR "${CMAKE_CURRENT_BINARY_DIR}")
 

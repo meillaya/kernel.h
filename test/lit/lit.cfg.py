@@ -48,6 +48,14 @@ if not getattr(config, "_kernelh_cfg_loaded", False):
         lit_config.fatal(
             "kernel.h lit: kernelh-opt binary %r not found; run the devenv "
             "`build` command first." % config.kernelh_opt_bin)
+    if not os.path.isfile(config.kernelh_bin):
+        lit_config.fatal(
+            "kernel.h lit: kernelh CLI binary %r not found; run the devenv "
+            "`build` command first." % config.kernelh_bin)
 
     config.substitutions.append(("kernelh-opt", config.kernelh_opt_bin))
+    # Boundary rule: "kernelh " (with trailing space) never matches inside
+    # "kernelh-opt" - neither in RUN lines nor in the kernelh-opt binary path
+    # substituted above. A bare "kernelh" rule would re-write both.
+    config.substitutions.append(("kernelh ", config.kernelh_bin + " "))
     config.substitutions.append(("FileCheck", config.filecheck_bin))
