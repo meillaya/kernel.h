@@ -19,13 +19,22 @@ add_executable(kernelh_unit
   pass_promote_shared_test.cpp
   pass_unroll_test.cpp
   pass_pipeline_test.cpp
+  runtime_error_test.cpp
+  runtime_descriptor_test.cpp
+  runtime_device_test.cpp
+  runtime_integration_test.cpp
 )
 target_link_libraries(kernelh_unit PRIVATE Catch2::Catch2
   # WHOLE_ARCHIVE: force-load every pass object so its self-registration
   # initializer runs (see lib/passes/CMakeLists.txt), or the pass tests would
   # find an empty global registry.
   $<LINK_LIBRARY:WHOLE_ARCHIVE,kernelh_passes>
-  kernelh_compiler kernelh_ir kernelh_dsl)
+  kernelh_compiler kernelh_ir kernelh_dsl
+  # WHOLE_ARCHIVE on kernelh_runtime too: its strong
+  # query_cu_count_runtime() override (todo-10 weak-hook contract) must win
+  # over the weak default in lib/compiler; plain archive extraction keeps the
+  # weak definition (verified empirically, see todo-23 evidence).
+  $<LINK_LIBRARY:WHOLE_ARCHIVE,kernelh_runtime>)
 
 # Bake the degraded-mode flag path into the binary (path resolved in
 # test/CMakeLists.txt from $ENV{KERNELH_DEGRADED_FLAG}) and the repo root (for
@@ -37,3 +46,14 @@ target_compile_definitions(kernelh_unit PRIVATE
 # The gpu_gate cases mutate the shared flag file; serialize them under -j.
 catch_discover_tests(kernelh_unit
   PROPERTIES RESOURCE_LOCK kernelh_degraded_flag)
+
+# Weak-hook default contract (plan todo 10 + todo 23): a runtime-free binary
+# must keep the weak query_cu_count_runtime() default of 0. kernelh_unit
+# cannot verify this (it links the strong override), so it runs here.
+add_executable(kernelh_weak_default_test
+  main.cpp
+  weak_default_test.cpp
+)
+target_link_libraries(kernelh_weak_default_test PRIVATE
+  Catch2::Catch2 kernelh_compiler)
+catch_discover_tests(kernelh_weak_default_test)
