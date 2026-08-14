@@ -45,6 +45,11 @@ void registerScanKernel();
 // the producer/consumer pair into ONE loop nest. Called by
 // ensureBuiltinKernels.
 void registerFusedGeluKernel();
+// Registers the attention template (lib/dsl/kernels/attention.cpp, plan todo
+// 31): NON-CAUSAL fused tiled attention with ONLINE softmax rescaling across
+// K/V tiles (iter_args carry running max + denominator + accumulator),
+// head_dim = 64, no matrix ops. Called by ensureBuiltinKernels.
+void registerAttentionKernel();
 
 } // namespace kernelh::detail
 

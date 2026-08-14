@@ -11,6 +11,7 @@ add_library(kernelh_dsl STATIC
   kernels/softmax.cpp
   kernels/scan.cpp
   kernels/fused_gelu.cpp
+  kernels/attention.cpp
 )
 
 target_link_libraries(kernelh_dsl PUBLIC kernelh_ir)

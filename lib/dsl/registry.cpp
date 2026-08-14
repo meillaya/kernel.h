@@ -32,6 +32,7 @@ void ensureBuiltinKernels() {
   registerSoftmaxKernel();
   registerScanKernel();
   registerFusedGeluKernel();
+  registerAttentionKernel();
 }
 
 } // namespace detail
