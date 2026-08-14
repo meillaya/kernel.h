@@ -1,0 +1,67 @@
+// Emitter lowering tests (plan todo 21): kernelh-opt --emit-mlir lowers the
+// custom atom IR to a device-only gpu.module (gpu.func entries with the
+// `kernel` attr, dynamic memref args, addrspace-3 shared globals). The
+// structure is locked by FileCheck; a failure probe proves unsupported
+// constructs give a clean diagnostic + non-zero exit instead of a crash.
+
+// RUN: kernelh-opt --load-atom %S/../../fixtures/vecadd.atom --emit-mlir | FileCheck %s --check-prefix=VO
+// RUN: kernelh-opt --load-atom %S/../../fixtures/gemm_tile.atom --emit-mlir | FileCheck %s --check-prefix=GT
+// RUN: kernelh-opt --load-atom %S/../../fixtures/reduce.atom --emit-mlir | FileCheck %s --check-prefix=RD
+// RUN: kernelh-opt --load-atom %S/../../fixtures/gemm_tile.atom --emit-mlir | not grep memref.alloc
+// RUN: kernelh-opt --load-atom %S/../../fixtures/gemm_tile.atom --emit-mlir | not grep bare_ptr
+// RUN: not kernelh-opt --load-atom %S/../../fixtures/unsupported_splat.atom --emit-mlir 2>&1 | FileCheck %s --check-prefix=ERR
+
+// VO: module {
+// VO:   gpu.module @kernelh {
+// VO:     gpu.func @vecadd(%arg0: memref<?xf32>, %arg1: memref<?xf32>) attributes {kernel} {
+// VO:       gpu.block_id  x
+// VO:       gpu.block_dim  x
+// VO:       gpu.thread_id  x
+// VO:       arith.muli
+// VO:       arith.addi
+// VO:       memref.load %arg0
+// VO:       memref.load %arg1
+// VO:       arith.addf
+// VO:       memref.store
+// VO:       gpu.return
+// VO:     }
+// VO:   }
+// VO: }
+
+// GT: gpu.module @kernelh {
+// GT:   memref.global @gemm_tile_shared_0 : memref<64x32xf32, 3> = uninitialized
+// GT:   memref.global @gemm_tile_shared_1 : memref<32x64xf32, 3> = uninitialized
+// GT:   gpu.func @gemm_tile(%arg0: memref<?x?xf32>, %arg1: memref<?x?xf32>, %arg2: memref<?x?xf32>) attributes {kernel} {
+// GT:     memref.get_global @gemm_tile_shared_0
+// GT:     memref.get_global @gemm_tile_shared_1
+// GT:     gpu.barrier
+// GT:     scf.for %{{.*}} = %{{.*}} to %{{.*}} step %{{.*}} {
+// GT:       scf.for %{{.*}} = %{{.*}} to %{{.*}} step %{{.*}} {
+// GT:         %{{.*}} = scf.for %{{.*}} = %{{.*}} to %{{.*}} step %{{.*}} iter_args(%{{.*}} = %{{.*}}) -> (f32) {
+// GT:           memref.load %{{.*}}[%{{.*}}, %{{.*}}] : memref<64x32xf32, 3>
+// GT:           memref.load %{{.*}}[%{{.*}}, %{{.*}}] : memref<32x64xf32, 3>
+// GT:           math.fma
+// GT:           scf.yield
+// GT:         }
+// GT:       }
+// GT:     }
+// GT:     vector.load %arg0[%{{.*}}, %{{.*}}] : memref<?x?xf32>, vector<4xf32>
+// GT:     vector.store %{{.*}}, %arg2[%{{.*}}, %{{.*}}] : memref<?x?xf32>, vector<4xf32>
+// GT:     gpu.return
+// GT:   }
+// GT: }
+
+// RD: gpu.func @reduce(%arg0: memref<?xf32>, %arg1: memref<?xf32>) attributes {kernel} {
+// RD:   scf.for %{{.*}} = %{{.*}} to %{{.*}} step %{{.*}} iter_args(%{{.*}} = %{{.*}}) -> (f32) {
+// RD:     memref.load %arg0[%{{.*}}] : memref<?xf32>
+// RD:     arith.addf
+// RD:   }
+// RD:   scf.for %{{.*}} = %{{.*}} to %{{.*}} step %{{.*}} iter_args(%{{.*}} = %{{.*}}) -> (f32) {
+// RD:     memref.load %arg0[%{{.*}}] : memref<?xf32>
+// RD:     arith.maxnumf
+// RD:   }
+// RD:   memref.store
+// RD:   gpu.return
+// RD: }
+
+// ERR: error: cannot lower atom.const splat into a buffer

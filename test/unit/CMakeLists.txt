@@ -23,6 +23,7 @@ add_executable(kernelh_unit
   runtime_descriptor_test.cpp
   runtime_device_test.cpp
   runtime_integration_test.cpp
+  emitter_test.cpp
 )
 target_link_libraries(kernelh_unit PRIVATE Catch2::Catch2
   # WHOLE_ARCHIVE: force-load every pass object so its self-registration
@@ -30,6 +31,9 @@ target_link_libraries(kernelh_unit PRIVATE Catch2::Catch2
   # find an empty global registry.
   $<LINK_LIBRARY:WHOLE_ARCHIVE,kernelh_passes>
   kernelh_compiler kernelh_ir kernelh_dsl
+  # The MLIR emitter (plan todo 21): its PUBLIC MLIR/atom-dialect deps
+  # propagate transitively.
+  kernelh_emitter
   # WHOLE_ARCHIVE on kernelh_runtime too: its strong
   # query_cu_count_runtime() override (todo-10 weak-hook contract) must win
   # over the weak default in lib/compiler; plain archive extraction keeps the

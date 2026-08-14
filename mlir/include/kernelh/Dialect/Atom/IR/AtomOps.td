@@ -203,10 +203,11 @@ def Atom_ReduceOp : Atom_Op<"reduce", [Pure]> {
   let hasVerifier = 1;
 }
 
-def Atom_CopyOp : Atom_Op<"copy", [AllTypesMatch<["src", "dst"]>]> {
+def Atom_CopyOp : Atom_Op<"copy", []> {
   let arguments = (ins Atom_TensorType:$src, Atom_TensorType:$dst);
   let assemblyFormat =
       "$src `,` $dst attr-dict `:` type($src) `to` type($dst)";
+  let hasVerifier = 1;
 }
 
 //===----------------------------------------------------------------------===//

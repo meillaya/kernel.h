@@ -1,0 +1,47 @@
+// One-tile GEMM fixture for the emitter (plan todo 21): the todo-16/19
+// one-tile shape (A 64x32, B 32x64, C 64x64) after shared-memory promotion.
+// Exercises alloc_shared -> addrspace-3 global, global->shared atom.copy,
+// gpu.barrier, nested scf.for, the K-loop with iter_args (fma accumulation),
+// and vector.load/store of vector<4xf32>.
+atom.kernel @gemm_tile(%v0: tensor<64x32xf32, global>, %v1: tensor<32x64xf32, global>, %v2: tensor<64x64xf32, global>) {
+  tile = [64, 64, 32]
+  map_blocks = true
+  map_warps = true
+  use_shared_memory = true
+  vector_width = 4
+  unroll = 2
+  shape = {k = 32, m = 64, n = 64}
+  %v3 = atom.const 0 : index
+  %v4 = atom.const 64 : index
+  %v5 = atom.const 1 : index
+  %v6 = atom.const 32 : index
+  %v7 = atom.const 0.0 : f32
+  %v8 = atom.block_id x : index
+  %v9 = atom.block_dim x : index
+  %v10 = atom.thread_id x : index
+  %v11 = atom.mul %v8, %v9 : index
+  %v12 = atom.add %v11, %v10 : index
+  %v13 = atom.alloc_shared : tensor<64x32xf32, shared>
+  %v14 = atom.alloc_shared : tensor<32x64xf32, shared>
+  atom.copy %v0, %v13 : tensor<64x32xf32, global> to tensor<64x32xf32, shared>
+  atom.copy %v1, %v14 : tensor<32x64xf32, global> to tensor<32x64xf32, shared>
+  atom.barrier
+  atom.loop_for %v3 to %v4 step %v5 iter_args() -> () {
+    ^bb0(%v15: index):
+      atom.loop_for %v3 to %v4 step %v5 iter_args() -> () {
+        ^bb0(%v16: index):
+          %v17 = atom.loop_for %v3 to %v6 step %v5 iter_args(%v7) -> (f32) {
+            ^bb0(%v18: index, %v19: f32):
+              %v20 = atom.load %v13[%v15, %v18] : tensor<64x32xf32, shared>
+              %v21 = atom.load %v14[%v18, %v16] : tensor<32x64xf32, shared>
+              %v22 = atom.fma %v20, %v21, %v19 : f32
+              atom.yield %v22 : f32
+          }
+          atom.store %v17, %v2[%v15, %v16] : tensor<64x64xf32, global>
+          atom.yield
+      }
+      atom.yield
+  }
+  %v23 = atom.load_vec %v0[%v12, %v3] : tensor<64x32xf32, global>, vector<4xf32>
+  atom.store_vec %v23, %v2[%v12, %v3] : tensor<64x64xf32, global>, vector<4xf32>
+}

@@ -12,3 +12,33 @@ add_library(kernelh_compiler STATIC device_limits.cpp)
 
 # Header search: repo-root include/ (kernelh/compiler/device_limits.hpp).
 target_include_directories(kernelh_compiler PUBLIC "${CMAKE_SOURCE_DIR}/include")
+
+# kernelh_emitter (plan todo 21): the MLIR emitter (custom IR -> atom dialect
+# -> gpu/scf/vector) is a SEPARATE static library so kernelh_compiler itself
+# stays MLIR-free. This keeps the no-MLIR link of kernelh_weak_default_test
+# (todo 23) intact: that binary links only kernelh_compiler and never sees
+# MLIR. Consumers of the emitter link kernelh_emitter + kernelh_ir +
+# kernelh_atom_mlir + the MLIR libs below.
+#
+# Only lib/compiler/device_limits.cpp must remain MLIR-free; emitter.cpp lives
+# in this separate library on purpose.
+add_library(kernelh_emitter STATIC emitter.cpp)
+target_include_directories(kernelh_emitter PUBLIC "${CMAKE_SOURCE_DIR}/include")
+target_link_libraries(kernelh_emitter PUBLIC
+  kernelh_ir
+  kernelh_atom_mlir
+  MLIRGPUDialect
+  MLIRSCFDialect
+  MLIRMemRefDialect
+  MLIRVectorDialect
+  MLIRArithDialect
+  MLIRMathDialect
+  MLIRControlFlowDialect
+  MLIRIR
+  MLIRPass
+  MLIRTransforms
+  MLIRTransformUtils
+  MLIRDialect
+  MLIRSupport
+  LLVM
+)

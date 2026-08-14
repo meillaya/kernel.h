@@ -1,0 +1,18 @@
+// Unsupported-construct probe fixture for the emitter (plan todo 21): a
+// memref-typed atom.const splat that is USED by an atom.store. Such a value
+// cannot lower to the gpu dialect surface (there is no memref-typed pure
+// value), so the emitter must fail with a clean diagnostic and a non-zero
+// exit instead of crashing.
+atom.kernel @bad_splat(%v0: tensor<16xf32, global>) {
+  tile = [16]
+  map_blocks = false
+  map_warps = false
+  use_shared_memory = false
+  vector_width = 1
+  unroll = 1
+  shape = {}
+  %v1 = atom.const 0 : index
+  %v2 = atom.const 0.0 : f32
+  %v3 = atom.const 1.0 : tensor<16xf32, global>
+  atom.store %v2, %v3[%v1] : tensor<16xf32, global>
+}

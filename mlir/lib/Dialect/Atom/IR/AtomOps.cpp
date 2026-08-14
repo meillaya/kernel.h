@@ -248,6 +248,29 @@ LogicalResult LoopForOp::verify() {
 }
 
 //===----------------------------------------------------------------------===//
+// AtomCopyOp
+//===----------------------------------------------------------------------===//
+
+// Mirrors the custom IR's atom.copy: src/dst must be memrefs of the same
+// shape and element type. Memory spaces MAY differ (the shared-memory
+// promotion pass emits global->shared tile copies). The ODS AllTypesMatch
+// trait is too strict for that, so the check lives here.
+LogicalResult CopyOp::verify() {
+  auto srcType = llvm::cast<MemRefType>(getSrc().getType());
+  auto dstType = llvm::cast<MemRefType>(getDst().getType());
+  if (srcType.getShape() != dstType.getShape()) {
+    return emitOpError("source and destination shapes do not match (")
+           << srcType.getShape() << " vs " << dstType.getShape() << ")";
+  }
+  if (srcType.getElementType() != dstType.getElementType()) {
+    return emitOpError("source and destination element types do not match (")
+           << srcType.getElementType() << " vs "
+           << dstType.getElementType() << ")";
+  }
+  return success();
+}
+
+//===----------------------------------------------------------------------===//
 // AtomKernelOp
 //===----------------------------------------------------------------------===//
 

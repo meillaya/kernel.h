@@ -40,6 +40,10 @@ target_link_libraries(kernelh-opt PRIVATE
   # The atom MLIR dialect (plan todo 20). main.cpp calls
   # kernelh::atom::registerAtomDialect directly, so a plain link is enough.
   kernelh_atom_mlir
+  # The MLIR emitter (plan todo 21): --emit-mlir lowers the atom module to a
+  # device-only gpu.module. kernelh-opt already links the full MLIR static set
+  # below, so the emitter's own MLIR deps are satisfied.
+  kernelh_emitter
   ${KERNELH_MLIR_STATIC_LIBS}
   LLVM
 )

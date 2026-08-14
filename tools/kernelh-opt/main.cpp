@@ -12,6 +12,8 @@
 //      --parse-atom            read ".atom" text from stdin
 //      --verify                explicit standalone structural verification
 //      --print-atom            print the module as ".atom" text to stdout
+//      --emit-mlir             lower the module to a device-only gpu.module
+//                              (todo 21 emitter) and print it as MLIR text
 //      --run-passes=<a,b,c>    run the pass pipeline in order
 //      --run-default-pipeline  run the pinned canonical pipeline order
 //      --dump-dir <dir>        per-pass dumps: 00-input.atom, NN-<pass>.atom
@@ -21,6 +23,7 @@
 //      kernelh-opt --load-atom f.atom --run-passes=... --print-atom
 
 #include "kernelh/compiler/device_limits.hpp"
+#include "kernelh/compiler/emitter.hpp"
 #include "kernelh/Dialect/Atom/IR/AtomDialect.h"
 #include "kernelh/ir/parser.hpp"
 #include "kernelh/ir/pass_manager.hpp"
@@ -32,6 +35,8 @@
 #include "mlir/InitAllExtensions.h"
 #include "mlir/InitAllPasses.h"
 #include "mlir/Tools/mlir-opt/MlirOptMain.h"
+
+#include "llvm/Support/raw_ostream.h"
 
 #include <fstream>
 #include <iostream>
@@ -47,6 +52,7 @@ struct AtomOptions {
   bool parseAtom = false;
   bool verify = false;
   bool printAtom = false;
+  bool emitMlir = false;
   bool hasRunPasses = false;
   bool runDefaultPipeline = false;
   bool hasDumpDir = false;
@@ -60,7 +66,8 @@ enum class ScanResult { NoAtom, AtomMode, UsageError };
 
 bool isAtomFlag(const std::string &arg) {
   return arg == "--load-atom" || arg == "--parse-atom" || arg == "--verify" ||
-         arg == "--print-atom" || arg == "--run-default-pipeline" ||
+         arg == "--print-atom" || arg == "--emit-mlir" ||
+         arg == "--run-default-pipeline" ||
          arg.rfind("--run-passes", 0) == 0 ||
          arg.rfind("--dump-dir", 0) == 0 ||
          arg.rfind("--atom-target", 0) == 0;
@@ -72,6 +79,8 @@ void printUsage() {
             << "  --parse-atom           read .atom text from stdin\n"
             << "  --verify               explicit structural verification\n"
             << "  --print-atom           print the module as .atom text\n"
+            << "  --emit-mlir            lower to a device-only gpu.module and\n"
+            << "                         print it as MLIR text (todo 21)\n"
             << "  --run-passes=<a,b,c>   run the pass pipeline in order\n"
             << "  --run-default-pipeline run the pinned canonical pipeline\n"
             << "  --dump-dir <dir>       per-pass dumps (needs --run-passes)\n"
@@ -129,6 +138,8 @@ ScanResult scanAtomOptions(int argc, char **argv, AtomOptions &options) {
       options.verify = true;
     } else if (arg == "--print-atom") {
       options.printAtom = true;
+    } else if (arg == "--emit-mlir") {
+      options.emitMlir = true;
     } else if (arg == "--run-passes" || arg.rfind("--run-passes=", 0) == 0) {
       if (!takeValue(argc, argv, i, arg, "--run-passes",
                      options.passPipeline)) {
@@ -258,6 +269,17 @@ int runAtomMode(const AtomOptions &options) {
 
   if (options.printAtom) {
     std::cout << kernelh::ir::printModule(module);
+  }
+
+  if (options.emitMlir) {
+    mlir::MLIRContext ctx;
+    auto gpu = kernelh::compiler::emitGpuModule(module, ctx);
+    if (!gpu) {
+      std::cerr << "error: " << gpu.error() << "\n";
+      return 1;
+    }
+    (**gpu).print(llvm::outs());
+    llvm::outs() << "\n";
   }
   return 0;
 }
