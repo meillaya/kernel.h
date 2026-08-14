@@ -212,7 +212,7 @@ TEST_CASE("autotuner_local_refinement_explores_neighbors_of_best") {
   // entries) - a refined neighbor may later beat it, so the final best_index
   // is not necessarily that config.
   size_t preBest = 0;
-  for (size_t i = 1; i < options.sample_cap; ++i) {
+  for (size_t i = 1; i < static_cast<size_t>(options.sample_cap); ++i) {
     if (result.evaluated[i].accepted &&
         result.evaluated[i].ms_median < result.evaluated[preBest].ms_median) {
       preBest = i;
