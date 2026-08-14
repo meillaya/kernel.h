@@ -34,4 +34,7 @@ target_link_libraries(kernelh PRIVATE
   # WHOLE_ARCHIVE so the strong query_cu_count_runtime() /
   # query_occupancy_max_blocks_runtime() overrides win over the weak defaults.
   $<LINK_LIBRARY:WHOLE_ARCHIVE,kernelh_runtime>
+  # The todo-35 benchmark harness (roofline microbenches, CSV, suites) powers
+  # `kernelh bench`.
+  kernelh_bench
 )

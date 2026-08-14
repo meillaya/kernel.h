@@ -53,6 +53,10 @@
 #include "kernelh/runtime/gpu_module.hpp"
 #include "kernelh/runtime/kernel_launch.hpp"
 
+// The todo-35 benchmark harness (`kernelh bench`): G32 results.csv writer,
+// metric formulas, roofline microbenchmarks, suite registry, orchestration.
+#include "run_bench.hpp"
+
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/GPU/IR/GPUDialect.h"
 #include "mlir/Dialect/Math/IR/Math.h"
@@ -142,10 +146,17 @@ void printUsage(std::ostream &os) {
       << "                        keyed sha256(kernel+shape+device_name); a\n"
       << "                        second run with the same key logs cache-hit)\n"
       << "  --timeout <seconds>   wall clock per candidate (1..3600, default 30;\n"
-      << "                        a hung candidate is skipped with reason timeout)\n"
-      << "\n"
-      << "explore, bench: not implemented yet (plan todos 37/35); they exit 2\n"
-      << "and ignore any arguments after a warning.\n"
+       << "                        a hung candidate is skipped with reason timeout)\n"
+       << "\n"
+       << "bench options (plan todo 35):\n"
+       << "  --suite <name>        benchmark suite: roofline, kernelh, rocblas,\n"
+       << "                        hipref, cuda-cross, all (default: all)\n"
+       << "  --out <path>          results.csv destination: a .csv file path OR a\n"
+       << "                        directory (results.csv is written inside)\n"
+       << "                        (required)\n"
+       << "\n"
+       << "explore: not implemented yet (plan todo 37); it exits 2 and ignores\n"
+       << "any arguments after a warning.\n"
      << "\n"
      << "--help prints this usage and exits 0.\n";
 }
@@ -1359,7 +1370,8 @@ int runTune(const TuneFlags &flags) {
 // explore/bench stubs: accepted so the CLI shape is stable, but they only
 // report the plan todo that implements them (37/35) and exit 2. Extra
 // arguments are ignored after a warning (their real flags arrive with their
-// todos). `tune` is fully implemented above (plan todo 34).
+// todos). `tune` is fully implemented above (plan todo 34). `bench` is fully
+// implemented below (plan todo 35) via the bench harness library.
 int notImplemented(const char *subcommand, int todo, int argc, char **argv) {
   std::cerr << subcommand << ": not implemented yet (plan todo " << todo
             << ")\n";
@@ -1371,6 +1383,33 @@ int notImplemented(const char *subcommand, int todo, int argc, char **argv) {
     std::cerr << "\n";
   }
   return kExitUsage;
+}
+
+// Scans argv[2..] for the bench flags (--suite/--out; --help handled in the
+// loop). On a malformed invocation an error is printed and false is returned
+// (caller prints usage and exits 2).
+bool scanBenchArgs(int argc, char **argv, kernelh::bench::BenchFlags &flags) {
+  for (int i = 2; i < argc; ++i) {
+    const std::string arg = argv[i];
+    if (arg == "--help" || arg == "-h") {
+      printUsage(std::cout);
+      std::exit(kExitOk);
+    }
+    std::string value;
+    if (takeValue(argc, argv, i, arg, "--suite", value)) {
+      flags.suite = value;
+    } else if (takeValue(argc, argv, i, arg, "--out", value)) {
+      flags.out = value;
+    } else {
+      std::cerr << "error: unknown flag '" << arg << "' for bench\n";
+      return false;
+    }
+  }
+  if (flags.out.empty()) {
+    std::cerr << "error: bench requires --out <path> (a .csv file or a dir)\n";
+    return false;
+  }
+  return true;
 }
 
 } // namespace
@@ -1397,7 +1436,12 @@ int main(int argc, char **argv) {
     return notImplemented("explore", 37, argc, argv);
   }
   if (subcommand == "bench") {
-    return notImplemented("bench", 35, argc, argv);
+    kernelh::bench::BenchFlags flags;
+    if (!scanBenchArgs(argc, argv, flags)) {
+      printUsage(std::cerr);
+      return kExitUsage;
+    }
+    return kernelh::bench::run_bench(flags);
   }
   if (subcommand == "tune") {
     TuneFlags flags;

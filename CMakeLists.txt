@@ -36,3 +36,5 @@ add_subdirectory(lib)
 add_subdirectory(mlir)
 add_subdirectory(tools)
 add_subdirectory(test)
+# Benchmark harness + hipcc-compiled reference kernels (plan todo 35).
+add_subdirectory(bench)

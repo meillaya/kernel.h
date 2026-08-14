@@ -36,6 +36,10 @@ add_executable(kernelh_unit
   e2e_scan_test.cpp
   e2e_fused_gelu_test.cpp
   e2e_attention_test.cpp
+  # Plan todo 35 benchmark harness tests (G32 CSV schema + metric formulas).
+  bench_csv_test.cpp
+  bench_metrics_test.cpp
+  bench_shape_text_test.cpp
 )
 target_link_libraries(kernelh_unit PRIVATE Catch2::Catch2
   # WHOLE_ARCHIVE: force-load every pass object so its self-registration
@@ -52,7 +56,10 @@ target_link_libraries(kernelh_unit PRIVATE Catch2::Catch2
   # query_cu_count_runtime() override (todo-10 weak-hook contract) must win
   # over the weak default in lib/compiler; plain archive extraction keeps the
   # weak definition (verified empirically, see todo-23 evidence).
-  $<LINK_LIBRARY:WHOLE_ARCHIVE,kernelh_runtime>)
+  $<LINK_LIBRARY:WHOLE_ARCHIVE,kernelh_runtime>
+  # The todo-35 benchmark harness (G32 CSV writer, metric formulas, shape-text
+  # parsing - the bench_* tests exercise it).
+  kernelh_bench)
 
 # Bake the degraded-mode flag path into the binary (path resolved in
 # test/CMakeLists.txt from $ENV{KERNELH_DEGRADED_FLAG}) and the repo root (for
