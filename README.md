@@ -2,16 +2,6 @@
 
 **kernel.h is a cross-vendor GPU kernel compiler: C++23 DSL → structured SSA IR → MLIR → NVVM/ROCDL → PTX/cubin/HSACO.**
 
-Write a GPU kernel once in a fluent C++23 DSL. kernel.h lowers it through a
-custom structured-SSA IR ("atom"), a seven-pass optimizer, and MLIR into native
-code for **both** vendor stacks — NVIDIA (PTX + cubin, `sm_80`, cross-compiled)
-and AMD (AMDGCN ISA + HSACO, `gfx1101`, executed locally). It then loads and
-launches the compiled kernel on the GPU, verifies the math against an fp64 CPU
-reference, benchmarks it against the vendor libraries (rocBLAS, plus HIP/cuBLAS/
-CUTLASS references), and produces a complete paper trail: per-pass IR dumps,
-MLIR stage dumps, generated assembly, resource and occupancy reports, autotuning
-results, perf charts, and a LaTeX technical report.
-
 Measured and verified on: **AMD Radeon RX 7800 XT (gfx1101, Navi 32)** — kernels
 run live on this GPU in full runtime mode (`degraded=false`). The NVIDIA path is
 cross-compiled to `sm_80` and validated on real NVIDIA hardware (RTX 6000 Ada).
@@ -86,55 +76,12 @@ Other entry points:
 
 ## Architecture
 
-```
-                          ┌──────────────────────────────────────────────┐
-                          │  C++23 DSL (include/kernelh/dsl)             │
-                          │  program().tile(32,32,32).map_blocks()       │
-                          │  .map_warps().use_shared_memory()            │
-                          │  .kernel("gemm").shape({m,n,k}).emit()       │
-                          └──────────────┬───────────────────────────────┘
-                                         │ emit()
-                                         ▼
-     ┌─────────────────────────────────────────────────────────────────────┐
-     │  atom IR — custom structured SSA (lib/ir)                           │
-     │  op inventory, verifier, printer (.atom text), parser, dump hooks   │
-     └──────────────┬──────────────────────────────────────────────────────┘
-                    │ kernelh::passes::runDefaultPipeline (7 passes)
-                    ▼
-     ┌─────────────────────────────────────────────────────────────────────┐
-     │  canonicalize → cse → fuse → tile → promote-shared → vectorize      │
-     │  → unroll          (per-pass dump: 01-*.atom .. 07-*.atom)          │
-     └──────────────┬──────────────────────────────────────────────────────┘
-                    │ kernelh::compiler::emitGpuModule (lib/compiler/emitter.cpp)
-                    ▼
-     ┌─────────────────────────────────────────────────────────────────────┐
-     │  atom MLIR dialect (tblgen) → gpu.module (gpu.func + addrspace-3    │
-     │  LDS globals, descriptor ABI) → scf/vector/arith/memref             │
-     └──────────────┬──────────────────────────────────────────────────────┘
-                    │ kernelh::compiler backends (lib/compiler/backends.cpp)
-            ┌───────┴────────┐
-            ▼                ▼
-     ┌──────────────┐  ┌──────────────────┐
-     │ NVVM path    │  │ ROCDL path       │
-     │ sm_80        │  │ gfx1101          │
-     │ vecadd.ptx   │  │ gemm.isa         │
-     │ vecadd.cubin │  │ gemm.hsaco       │
-     │ (ptxas +     │  │ (external lld +  │
-     │  libdevice)  │  │  device-libs)    │
-     └──────┬───────┘  └────────┬─────────┘
-            │ cross-only        │ LOCAL EXECUTION
-            │ (no NVIDIA HW     ▼
-            │  on this box)  ┌────────────────────┐
-            │                │ thin runtime       │
-            └──────────────▶ │ hipModuleLoadData  │  + CUDA Driver API
-                             │ dlopen backend     │    backend (cross, exit 77)
-                             └────────────────────┘
-                                     │
-                                     ▼
-                      numeric e2e vs fp64 reference
-                      bench vs rocBLAS / HIP refs / roofline
-                      autotuner + resources + occupancy + charts
-```
+![kernel.h architecture](docs/diagrams/architecture.png)
+
+*kernel.h compile pipeline: C++23 DSL → atom IR → seven-pass optimizer → MLIR
+lowering → NVVM/ROCDL vendor backends → thin HIP/CUDA runtime, with the kernelh
+tools (autotuner, benchmark harness, explorer, occupancy/resource reporters)
+branching off the compile path. [edit in Excalidraw](docs/diagrams/architecture.excalidraw.json)*
 
 ## Benchmark summary
 
