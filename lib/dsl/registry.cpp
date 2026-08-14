@@ -29,6 +29,7 @@ void ensureBuiltinKernels() {
   registerVecaddKernel();
   registerGemmKernel();
   registerLayernormKernel();
+  registerSoftmaxKernel();
 }
 
 } // namespace detail

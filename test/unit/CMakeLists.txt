@@ -29,6 +29,7 @@ add_executable(kernelh_unit
   e2e_vecadd_test.cpp
   e2e_gemm_test.cpp
   e2e_layernorm_test.cpp
+  e2e_softmax_test.cpp
 )
 target_link_libraries(kernelh_unit PRIVATE Catch2::Catch2
   # WHOLE_ARCHIVE: force-load every pass object so its self-registration
