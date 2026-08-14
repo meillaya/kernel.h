@@ -1,0 +1,26 @@
+// Unroll fixture (PARTIAL): a reduction-style loop with trip count 10 and
+// unroll = 4. The trip count exceeds 8, so the pass unrolls by the factor
+// with a cleanup loop: the main loop runs ceil((10-2)/4) = 2 trips over a
+// 4-copy body (4+4) and the cleanup loop runs the ORIGINAL body for the
+// leftover 2 iterations. The iter_args carry chain threads through the main
+// loop's copies and its result feeds the cleanup loop's iter args.
+atom.kernel @unroll_partial(%v0: tensor<10xf32, global>, %v1: tensor<10xf32, global>) {
+  tile = []
+  map_blocks = false
+  map_warps = false
+  use_shared_memory = false
+  vector_width = 1
+  unroll = 4
+  shape = {n = 10}
+  %v2 = atom.const 0 : index
+  %v3 = atom.const 10 : index
+  %v4 = atom.const 1 : index
+  %v5 = atom.const 0.0 : f32
+  %v6 = atom.loop_for %v2 to %v3 step %v4 iter_args(%v5) -> (f32) {
+    ^bb0(%v7: index, %v8: f32):
+      %v9 = atom.load %v0[%v7] : tensor<10xf32, global>
+      %v10 = atom.add %v9, %v8 : f32
+      atom.yield %v10 : f32
+  }
+  atom.store %v6, %v1[%v2] : tensor<10xf32, global>
+}

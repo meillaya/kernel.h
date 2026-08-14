@@ -1,0 +1,64 @@
+// Unroll pass lit tests (plan todo 18): the pinned rule fully unrolls a loop
+// whose trip count is <= 8 when the kernel attr unroll >= the trip count
+// (FULL fixture: trip 4, unroll 4 -> no loop remains, body replicated 4x,
+// carry chain threaded); otherwise the loop is unrolled by the factor with a
+// CLEANUP loop for the remainder (PARTIAL fixture: trip 10, unroll 4 -> main
+// loop [0, 8] with a 4-copy body plus a cleanup loop [8, 10] running the
+// original body). The unknown-pass probe must still list unroll among the
+// registered passes.
+
+// RUN: kernelh-opt --load-atom %S/../../fixtures/passes/unroll_full.atom --run-passes=unroll --print-atom > %t.full.out
+// RUN: FileCheck %s --check-prefix=FULL < %t.full.out
+// RUN: not grep 'atom.loop_for' %t.full.out
+
+// RUN: kernelh-opt --load-atom %S/../../fixtures/passes/unroll_partial.atom --run-passes=unroll --print-atom > %t.partial.out
+// RUN: FileCheck %s --check-prefix=PARTIAL < %t.partial.out
+
+// Unknown pass errors still list every registered pass (now incl. unroll;
+// the list is sorted, and a bare substring check is robust against
+// concurrently-landing passes).
+// RUN: not kernelh-opt --load-atom %S/../../fixtures/passes/unroll_full.atom --run-passes=nonexistent 2>&1 | FileCheck %s --check-prefix=UNKNOWN
+
+// FULL: atom.kernel @unroll_full(
+// FULL-NOT: atom.loop_for
+// The body is replicated 4x: each copy loads at its own induction constant,
+// and the iter_args carry chain threads through the copies - each add
+// consumes the previous copy's result, and the final value reaches the
+// store.
+// FULL: %v6 = atom.load %v0[%v2] : tensor<4xf32, global>
+// FULL: %v7 = atom.add %v6, %v5 : f32
+// FULL: %v9 = atom.load %v0[%v8] : tensor<4xf32, global>
+// FULL: %v10 = atom.add %v9, %v7 : f32
+// FULL: %v12 = atom.load %v0[%v11] : tensor<4xf32, global>
+// FULL: %v13 = atom.add %v12, %v10 : f32
+// FULL: %v15 = atom.load %v0[%v14] : tensor<4xf32, global>
+// FULL: %v16 = atom.add %v15, %v13 : f32
+// FULL: atom.store %v16, %v1[%v2] : tensor<4xf32, global>
+
+// PARTIAL: atom.kernel @unroll_partial(
+// The main loop keeps the lower trip [0, 8] with a 4-copy body; copy i
+// loads at ind + i (index adds %v15/%v18/%v21) and the chain threads.
+// PARTIAL: %v10 = atom.loop_for %v2 to %v9 step %v4 iter_args(%v5) -> (f32) {
+// PARTIAL: %v13 = atom.load %v0[%v11] : tensor<10xf32, global>
+// PARTIAL: %v14 = atom.add %v13, %v5 : f32
+// PARTIAL: %v15 = atom.add %v11, %v6 : index
+// PARTIAL: %v16 = atom.load %v0[%v15] : tensor<10xf32, global>
+// PARTIAL: %v17 = atom.add %v16, %v14 : f32
+// PARTIAL: %v18 = atom.add %v11, %v7 : index
+// PARTIAL: %v19 = atom.load %v0[%v18] : tensor<10xf32, global>
+// PARTIAL: %v20 = atom.add %v19, %v17 : f32
+// PARTIAL: %v21 = atom.add %v11, %v8 : index
+// PARTIAL: %v22 = atom.load %v0[%v21] : tensor<10xf32, global>
+// PARTIAL: %v23 = atom.add %v22, %v20 : f32
+// PARTIAL: atom.yield %v23 : f32
+// The cleanup loop covers the remainder [8, 10] and takes the main loop's
+// result as its iter arg; it runs the ORIGINAL body (1 load, its own chain).
+// PARTIAL: %v11 = atom.loop_for %v9 to %v3 step %v4 iter_args(%v10) -> (f32) {
+// PARTIAL: %v14 = atom.load %v0[%v12] : tensor<10xf32, global>
+// PARTIAL: %v15 = atom.add %v14, %v13 : f32
+// PARTIAL: atom.yield %v15 : f32
+// PARTIAL: atom.store %v11, %v1[%v2] : tensor<10xf32, global>
+
+// UNKNOWN: error: unknown pass 'nonexistent'
+// UNKNOWN: registered passes:
+// UNKNOWN-SAME: unroll
