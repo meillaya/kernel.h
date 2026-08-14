@@ -1,0 +1,14 @@
+# Build & generated artifacts
+build/
+artifacts/
+cache/
+*.o
+*.so
+
+# Dev environment & caches
+.devenv/
+.cache/
+
+# Planner / agent state
+.omo/
+.codegraph
