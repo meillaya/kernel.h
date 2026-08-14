@@ -1,0 +1,57 @@
+// Fuse pass lit tests (plan todo 14): elementwise producer-consumer chain
+// fusion into one loop nest.
+//
+// The FUSE fixture computes z = tanh(a*x + b) as two elementwise loops over
+// one shared iteration domain with an intermediate shared tensor; the pass
+// merges them into ONE loop, rewrites the consumer's loads of the
+// intermediate to the producer's stored value, and eliminates the
+// intermediate (its alloc_shared is dead and erased). The BARRIER fixture is
+// the identical chain with an atom.barrier between the loops (memory
+// ordering: fusion must NOT fire). The MULTIUSE fixture gives the
+// intermediate a second use outside the chain (fusion must NOT fire).
+
+// RUN: kernelh-opt --load-atom %S/../../fixtures/passes/fuse.atom --run-passes=fuse --print-atom | FileCheck %s --check-prefix=FUSED
+// RUN: kernelh-opt --load-atom %S/../../fixtures/passes/fuse_barrier.atom --run-passes=fuse --print-atom | FileCheck %s --check-prefix=BARRIER
+// RUN: kernelh-opt --load-atom %S/../../fixtures/passes/fuse_multiuse.atom --run-passes=fuse --print-atom | FileCheck %s --check-prefix=MULTIUSE
+
+// The FUSE fixture collapses to ONE loop; the intermediate is gone before
+// the loop (its alloc_shared would print there) and never reappears.
+// FUSED-LABEL: atom.kernel @fuse(
+// FUSED-NOT: atom.alloc_shared
+// FUSED-COUNT-1: atom.loop_for
+// FUSED: ^bb0(
+// FUSED: atom.load
+// FUSED: atom.mul
+// FUSED: atom.load
+// FUSED: atom.add
+// FUSED: atom.math tanh
+// FUSED: atom.store
+// FUSED: atom.yield
+// FUSED-NOT: atom.loop_for
+// FUSED-NOT: atom.alloc_shared
+
+// The BARRIER fixture keeps both loops with the barrier between them; a
+// second atom.loop_for match after the barrier proves the consumer loop is
+// intact.
+// BARRIER-LABEL: atom.kernel @fuse_barrier(
+// BARRIER: atom.alloc_shared
+// BARRIER: atom.loop_for
+// BARRIER: atom.store
+// BARRIER: atom.barrier
+// BARRIER: atom.loop_for
+// BARRIER: atom.math tanh
+// BARRIER: atom.store
+// BARRIER: atom.yield
+// BARRIER-NOT: atom.loop_for
+
+// The MULTIUSE fixture keeps the intermediate's second use (the body load
+// after the loops); two loops prove fusion did not fire.
+// MULTIUSE-LABEL: atom.kernel @fuse_multiuse(
+// MULTIUSE: atom.alloc_shared
+// MULTIUSE-COUNT-2: atom.loop_for
+// MULTIUSE: atom.load
+// MULTIUSE: atom.math tanh
+// MULTIUSE: atom.store
+// MULTIUSE: atom.yield
+// MULTIUSE: atom.load
+// MULTIUSE-NOT: atom.loop_for
