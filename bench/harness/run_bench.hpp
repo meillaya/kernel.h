@@ -6,7 +6,8 @@
 //   0   - every row measured + CSV written
 //   1   - operational failure (device unavailable, a row failed, bad suite)
 //   2   - CLI usage error (unknown suite, handled here for the QA probe)
-//   77  - skip: no CUDA driver (cuda-cross suite on a machine without one)
+//   77  - skip: no CUDA driver (cuda-cross suite on a machine without one),
+//         or no HIP device (degraded mode - the [gpu] backends are skipped)
 
 #ifndef KERNELH_BENCH_RUN_BENCH_HPP
 #define KERNELH_BENCH_RUN_BENCH_HPP
@@ -18,6 +19,10 @@ namespace kernelh::bench {
 struct BenchFlags {
   std::string suite = "all";
   std::string out; // a .csv file path OR a directory (results.csv inside)
+  // --occupancy hook (consumed by plan todo 36): accepted by the CLI now so
+  // the flag surface is stable; the occupancy report generation lands with
+  // todo 36 and reads this flag.
+  bool occupancy = false;
 };
 
 // Resolves `out` to the CSV path: paths already ending in ".csv" are used

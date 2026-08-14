@@ -3,7 +3,10 @@
 #include "bench_row.hpp"
 #include "clock_pin.hpp"
 #include "csv.hpp"
+#include "hipref_backend.hpp"
+#include "kernelh_backend.hpp"
 #include "metrics.hpp"
+#include "rocblas_backend.hpp"
 #include "roofline.hpp"
 #include "shape_text.hpp"
 #include "suites.hpp"
@@ -53,16 +56,13 @@ std::optional<BenchRow> run_one_row(
     return std::nullopt;
   }
   if (spec.backend == "kernelh") {
-    error = "kernelh backend not implemented yet in this build (todo 35)";
-    return std::nullopt;
+    return run_kernelh_row(spec, backend, deviceName, error);
   }
   if (spec.backend == "rocblas") {
-    error = "rocblas backend not implemented yet in this build (todo 35)";
-    return std::nullopt;
+    return run_rocblas_row(spec, backend, deviceName, error);
   }
   if (spec.backend == "hipref-naive" || spec.backend == "hipref-vec") {
-    error = "hipref backend not implemented yet in this build (todo 35)";
-    return std::nullopt;
+    return run_hipref_row(spec, backend, deviceName, error);
   }
   error = "unknown backend '" + spec.backend + "'";
   return std::nullopt;
@@ -125,12 +125,12 @@ int run_bench(const BenchFlags &flags) {
   auto backend = kernelh::runtime::make_hip_backend();
   if (!backend) {
     std::cerr << "skip: no HIP device (degraded mode)\n";
-    return 1;
+    return 77;
   }
   auto ctx = kernelh::runtime::DeviceContext::create(backend);
   if (!ctx) {
     std::cerr << "skip: no HIP device (" << ctx.error().message << ")\n";
-    return 1;
+    return 77;
   }
   const std::string deviceName = ctx->name();
   std::cout << "bench: device " << deviceName << ", suite " << flags.suite

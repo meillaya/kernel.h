@@ -154,6 +154,8 @@ void printUsage(std::ostream &os) {
        << "  --out <path>          results.csv destination: a .csv file path OR a\n"
        << "                        directory (results.csv is written inside)\n"
        << "                        (required)\n"
+       << "  --occupancy           hook for the todo-36 occupancy report (accepted\n"
+       << "                        now; the report generation lands with todo 36)\n"
        << "\n"
        << "explore: not implemented yet (plan todo 37); it exits 2 and ignores\n"
        << "any arguments after a warning.\n"
@@ -1400,6 +1402,10 @@ bool scanBenchArgs(int argc, char **argv, kernelh::bench::BenchFlags &flags) {
       flags.suite = value;
     } else if (takeValue(argc, argv, i, arg, "--out", value)) {
       flags.out = value;
+    } else if (arg == "--occupancy") {
+      // Hook for plan todo 36: accepted now so the flag surface is stable;
+      // the occupancy report generation consumes it in todo 36.
+      flags.occupancy = true;
     } else {
       std::cerr << "error: unknown flag '" << arg << "' for bench\n";
       return false;
