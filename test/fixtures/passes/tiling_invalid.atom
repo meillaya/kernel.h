@@ -1,0 +1,22 @@
+// Tiling failure probe: a non-positive tile extent (0). The tile pass must
+// emit a diagnostic error naming the kernel and the extent (the verifier
+// also rejects it, so this fixture is exercised through --parse-atom, which
+// skips verification, to prove the PASS itself diagnoses it).
+atom.kernel @tiling_invalid(%v0: tensor<1024xf32, global>) {
+  tile = [0]
+  map_blocks = true
+  map_warps = false
+  use_shared_memory = false
+  vector_width = 1
+  unroll = 1
+  shape = {n = 1024}
+  %v1 = atom.const 0 : index
+  %v2 = atom.const 1024 : index
+  %v3 = atom.const 1 : index
+  atom.loop_for %v1 to %v2 step %v3 iter_args() -> () {
+    ^bb0(%v4: index):
+      %v5 = atom.load %v0[%v4] : tensor<1024xf32, global>
+      atom.store %v5, %v0[%v4] : tensor<1024xf32, global>
+      atom.yield
+  }
+}

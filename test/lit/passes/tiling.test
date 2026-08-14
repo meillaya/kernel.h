@@ -1,0 +1,116 @@
+// Tiling pass lit tests (plan todo 15): the tile pass consumes the kernel's
+// schedule attrs (tile = [BM, BN, BK], map_blocks, map_warps) and rewrites
+// the iteration domain into a grid-level block loop (block_id-derived
+// offsets) plus an intra-block tile loop, with boundary predicates when the
+// tile does not divide the problem extent.
+//
+// The TILED fixture is a divisible serial GEMM skeleton (1024 % 64 == 0)
+// with map_warps on: FileCheck asserts the block_id-derived base offset,
+// the wavefront partition (thread_id / wavefront_size, const 32 from the
+// device-limits table), the tile loop, and the tile guard (W is runtime so
+// the in-tile row is guarded even for divisible extents).
+//
+// The NONDIV fixture (100 with tile 32, map_warps off) isolates the extent
+// boundary predicate: atom.cmp against the extent plus atom.select-guarded
+// indices on every load/store that depends on the block_id-derived index -
+// proving the boundary guards exist, not just exit 0.
+//
+// The NOOP fixture (map_blocks = false) must pass through unchanged: no
+// block_id, no thread_id, no guards.
+
+// RUN: kernelh-opt --load-atom %S/../../fixtures/passes/tiling.atom --run-passes=tile --print-atom | FileCheck %s --check-prefix=TILED
+// RUN: kernelh-opt --load-atom %S/../../fixtures/passes/tiling_nondiv.atom --run-passes=tile --print-atom | FileCheck %s --check-prefix=NONDIV
+// RUN: kernelh-opt --load-atom %S/../../fixtures/passes/tiling_noop.atom --run-passes=tile --print-atom | FileCheck %s --check-prefix=NOOP
+
+// Failure probe: non-positive tile extent -> the pass returns a diagnostic
+// error (kernelh-opt exits non-zero with the message). --parse-atom skips
+// verification so the PASS's own diagnostic is what surfaces.
+// RUN: not kernelh-opt --parse-atom < %S/../../fixtures/passes/tiling_invalid.atom --run-passes=tile --print-atom 2>&1 | FileCheck %s --check-prefix=BADTILE
+
+// Unknown pass: the registry listing now includes the tile pass.
+// RUN: not kernelh-opt --load-atom %S/../../fixtures/passes/tiling.atom --run-passes=nonexistent 2>&1 | FileCheck %s --check-prefix=UNKNOWN
+
+// TILED-LABEL: atom.kernel @tiling(
+// Schedule attrs ride along on the kernel.
+// TILED: tile = [64, 64, 32]
+// TILED: map_blocks = true
+// TILED: map_warps = true
+// TILED: use_shared_memory = false
+// TILED: %v{{[0-9]+}} = atom.const 0 : index
+// TILED: %v{{[0-9]+}} = atom.const 1024 : index
+// TILED: %v{{[0-9]+}} = atom.const 1 : index
+// The block_id-derived offset: base = block_id * 64.
+// TILED: %v{{[0-9]+}} = atom.block_id x : index
+// TILED: %v{{[0-9]+}} = atom.const 64 : index
+// TILED: %v{{[0-9]+}} = atom.mul %v{{[0-9]+}}, %v{{[0-9]+}} : index
+// The wavefront partition (wavefront_size = 32 from the device-limits
+// table, never hardcoded elsewhere): wf = thread_id / 32, then
+// W = ceil(block_dim / 32) and trip = ceil(64 / W) - three index divs.
+// TILED: %v{{[0-9]+}} = atom.const 32 : index
+// TILED: %v{{[0-9]+}} = atom.thread_id x : index
+// The wavefront index itself (wf = thread_id / 32)...
+// TILED: %v{{[0-9]+}} = atom.div %v{{[0-9]+}}, %v{{[0-9]+}} : index
+// TILED: %v{{[0-9]+}} = atom.block_dim x : index
+// ...then W = ceil(block_dim / 32) and trip = ceil(64 / W): two more index
+// divs after the block_dim op.
+// TILED-COUNT-2: %v{{[0-9]+}} = atom.div %v{{[0-9]+}}, %v{{[0-9]+}} : index
+// The intra-block tile loop (atom.loop_for over the tile extents).
+// TILED: atom.loop_for %v{{[0-9]+}} to %v{{[0-9]+}} step %v{{[0-9]+}} iter_args() -> () {
+// Tile guard (W is runtime): cmp lt on the in-tile row, then a guarded
+// load/store index through atom.select.
+// TILED: %v{{[0-9]+}} = atom.cmp lt %v{{[0-9]+}}, %v{{[0-9]+}} : index
+// TILED: %v{{[0-9]+}} = atom.select %v{{[0-9]+}}, %v{{[0-9]+}}, %v{{[0-9]+}} : index
+// TILED: %v{{[0-9]+}} = atom.load %v{{[0-9]+}}[%v{{[0-9]+}}, %v{{[0-9]+}}] : tensor<1024x1024xf32, global>
+// TILED: %v{{[0-9]+}} = atom.load %v{{[0-9]+}}[%v{{[0-9]+}}, %v{{[0-9]+}}] : tensor<1024x1024xf32, global>
+// TILED: %v{{[0-9]+}} = atom.fma %v{{[0-9]+}}, %v{{[0-9]+}}, %v{{[0-9]+}} : f32
+// TILED: atom.yield %v{{[0-9]+}} : f32
+// TILED: %v{{[0-9]+}} = atom.select %v{{[0-9]+}}, %v{{[0-9]+}}, %v{{[0-9]+}} : index
+// TILED: atom.store %v{{[0-9]+}}, %v{{[0-9]+}}[%v{{[0-9]+}}, %v{{[0-9]+}}] : tensor<1024x1024xf32, global>
+
+// NONDIV-LABEL: atom.kernel @tiling_nondiv(
+// NONDIV: tile = [32, 32, 32]
+// NONDIV: map_blocks = true
+// NONDIV: map_warps = false
+// NONDIV: %v{{[0-9]+}} = atom.const 0 : index
+// NONDIV: %v{{[0-9]+}} = atom.const 100 : index
+// NONDIV: %v{{[0-9]+}} = atom.const 1 : index
+// NONDIV: %v{{[0-9]+}} = atom.block_id x : index
+// NONDIV: %v{{[0-9]+}} = atom.const 32 : index
+// NONDIV: %v{{[0-9]+}} = atom.mul %v{{[0-9]+}}, %v{{[0-9]+}} : index
+// No wavefront partition without map_warps.
+// NONDIV-NOT: atom.thread_id
+// NONDIV-NOT: atom.div
+// The intra-block tile loop.
+// NONDIV: atom.loop_for %v{{[0-9]+}} to %v{{[0-9]+}} step %v{{[0-9]+}} iter_args() -> () {
+// Boundary predicate for the non-divisible extent (100 % 32 != 0): the
+// block_id-derived global index is compared against the extent and every
+// load/store index that depends on it is clamped via atom.select.
+// NONDIV: %v{{[0-9]+}} = atom.cmp lt %v{{[0-9]+}}, %v{{[0-9]+}} : index
+// NONDIV: %v{{[0-9]+}} = atom.select %v{{[0-9]+}}, %v{{[0-9]+}}, %v{{[0-9]+}} : index
+// NONDIV: %v{{[0-9]+}} = atom.load %v{{[0-9]+}}[%v{{[0-9]+}}, %v{{[0-9]+}}] : tensor<100x100xf32, global>
+// NONDIV: %v{{[0-9]+}} = atom.load %v{{[0-9]+}}[%v{{[0-9]+}}, %v{{[0-9]+}}] : tensor<100x100xf32, global>
+// NONDIV: %v{{[0-9]+}} = atom.fma %v{{[0-9]+}}, %v{{[0-9]+}}, %v{{[0-9]+}} : f32
+// NONDIV: atom.yield %v{{[0-9]+}} : f32
+// NONDIV: %v{{[0-9]+}} = atom.select %v{{[0-9]+}}, %v{{[0-9]+}}, %v{{[0-9]+}} : index
+// NONDIV: atom.store %v{{[0-9]+}}, %v{{[0-9]+}}[%v{{[0-9]+}}, %v{{[0-9]+}}] : tensor<100x100xf32, global>
+
+// NOOP-LABEL: atom.kernel @tiling_noop(
+// NOOP: tile = [64, 64, 32]
+// NOOP: map_blocks = false
+// NOOP: map_warps = true
+// map_blocks = false -> the pass leaves the kernel untouched: no
+// block_id-derived offsets, no wavefront partition, no guards.
+// NOOP-NOT: atom.block_id
+// NOOP-NOT: atom.thread_id
+// NOOP-NOT: atom.cmp
+// NOOP-NOT: atom.select
+// The serial M loop keeps its full-extent bounds and the body is intact.
+// NOOP: atom.loop_for %v{{[0-9]+}} to %v{{[0-9]+}} step %v{{[0-9]+}} iter_args() -> () {
+// NOOP: %v{{[0-9]+}} = atom.const 0 : f32
+// NOOP: %v{{[0-9]+}} = atom.load %v{{[0-9]+}}[%v{{[0-9]+}}, %v{{[0-9]+}}] : tensor<1024x1024xf32, global>
+// NOOP: atom.store %v{{[0-9]+}}, %v{{[0-9]+}}[%v{{[0-9]+}}, %v{{[0-9]+}}] : tensor<1024x1024xf32, global>
+
+// BADTILE: error: {{.*}}non-positive tile extent 0; tile sizes must be positive
+
+// UNKNOWN: error: unknown pass 'nonexistent'
+// UNKNOWN: registered passes: {{.*}}tile{{.*}}

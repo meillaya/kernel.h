@@ -1,0 +1,33 @@
+// Tiling fixture: the same serial GEMM skeleton with map_blocks = false,
+// which is a documented NO-OP for the tile pass: no block_id offsets, no
+// wavefront partition, no boundary predicates - the M loop keeps its full
+// extent bounds.
+atom.kernel @tiling_noop(%v0: tensor<1024x1024xf32, global>, %v1: tensor<1024x1024xf32, global>, %v2: tensor<1024x1024xf32, global>) {
+  tile = [64, 64, 32]
+  map_blocks = false
+  map_warps = true
+  use_shared_memory = false
+  vector_width = 1
+  unroll = 1
+  shape = {k = 1024, m = 1024, n = 1024}
+  %v3 = atom.const 0 : index
+  %v4 = atom.const 1024 : index
+  %v5 = atom.const 1 : index
+  atom.loop_for %v3 to %v4 step %v5 iter_args() -> () {
+    ^bb0(%v6: index):
+      %v7 = atom.const 0.0 : f32
+      atom.loop_for %v3 to %v4 step %v5 iter_args() -> () {
+        ^bb0(%v8: index):
+          %v9 = atom.loop_for %v3 to %v4 step %v5 iter_args(%v7) -> (f32) {
+            ^bb0(%v10: index, %v11: f32):
+              %v12 = atom.load %v0[%v6, %v10] : tensor<1024x1024xf32, global>
+              %v13 = atom.load %v1[%v10, %v8] : tensor<1024x1024xf32, global>
+              %v14 = atom.fma %v12, %v13, %v11 : f32
+              atom.yield %v14 : f32
+          }
+          atom.store %v9, %v2[%v6, %v8] : tensor<1024x1024xf32, global>
+          atom.yield
+      }
+      atom.yield
+  }
+}

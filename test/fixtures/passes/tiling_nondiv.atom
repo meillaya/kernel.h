@@ -1,0 +1,34 @@
+// Tiling fixture: a serial GEMM skeleton with a NON-DIVISIBLE extent
+// (100 % 32 != 0) and map_warps OFF, isolating the extent boundary
+// predicate: the pass emits %ok = atom.cmp lt <gi>, <100> and guards every
+// load/store index that depends on the block_id-derived global index with
+// atom.select (never out-of-bounds).
+atom.kernel @tiling_nondiv(%v0: tensor<100x100xf32, global>, %v1: tensor<100x100xf32, global>, %v2: tensor<100x100xf32, global>) {
+  tile = [32, 32, 32]
+  map_blocks = true
+  map_warps = false
+  use_shared_memory = false
+  vector_width = 1
+  unroll = 1
+  shape = {k = 100, m = 100, n = 100}
+  %v3 = atom.const 0 : index
+  %v4 = atom.const 100 : index
+  %v5 = atom.const 1 : index
+  atom.loop_for %v3 to %v4 step %v5 iter_args() -> () {
+    ^bb0(%v6: index):
+      %v7 = atom.const 0.0 : f32
+      atom.loop_for %v3 to %v4 step %v5 iter_args() -> () {
+        ^bb0(%v8: index):
+          %v9 = atom.loop_for %v3 to %v4 step %v5 iter_args(%v7) -> (f32) {
+            ^bb0(%v10: index, %v11: f32):
+              %v12 = atom.load %v0[%v6, %v10] : tensor<100x100xf32, global>
+              %v13 = atom.load %v1[%v10, %v8] : tensor<100x100xf32, global>
+              %v14 = atom.fma %v12, %v13, %v11 : f32
+              atom.yield %v14 : f32
+          }
+          atom.store %v9, %v2[%v6, %v8] : tensor<100x100xf32, global>
+          atom.yield
+      }
+      atom.yield
+  }
+}
