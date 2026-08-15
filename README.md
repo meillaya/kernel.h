@@ -83,6 +83,105 @@ lowering → NVVM/ROCDL vendor backends → thin HIP/CUDA runtime, with the kern
 tools (autotuner, benchmark harness, explorer, occupancy/resource reporters)
 branching off the compile path. [edit in Excalidraw](docs/diagrams/architecture.excalidraw.json)*
 
+## Architecture diagrams
+
+**App architecture — the compile + runtime flow:**
+
+```mermaid
+flowchart TB
+    classDef comp fill:#1565c0,stroke:#0d47a1,color:#fff
+    classDef be fill:#2e7d32,stroke:#1b5e20,color:#fff
+    classDef rt fill:#e65100,stroke:#bf360c,color:#fff
+    classDef tl fill:#455a64,stroke:#37474f,color:#fff
+    classDef gpu fill:#eceff1,stroke:#37474f,color:#263238
+
+    subgraph Core["Compiler core"]
+        DSL["C++23 DSL<br/>program().tile(...).map_blocks().map_warps()<br/>.use_shared_memory().kernel(...).shape(...).emit()"]
+        ATOM["atom IR — structured SSA<br/>verifier · printer/parser · per-pass dump hooks"]
+        PIPELINE["7-pass pipeline (pinned order)<br/>canonicalize → cse → fuse → tile<br/>→ promote-shared → vectorize → unroll<br/>per-pass dumps 01-*.atom … 07-*.atom"]
+        MLIR["MLIR lowering<br/>atom dialect (tblgen) → gpu.module<br/>(gpu.func + addrspace-3 LDS globals · descriptor ABI)<br/>→ scf/vector/arith/memref"]
+    end
+
+    subgraph BE["Backends (vendor split)"]
+        NVVM["NVVM → PTX (format=isa)<br/>+ cubin (format=bin · ptxas + libdevice)"]
+        ROCDL["ROCDL → HSACO + AMDGCN ISA<br/>(external ld.lld + device-libs · rocm-toolkit-root)"]
+    end
+
+    subgraph RT["Runtime & loaders"]
+        HIP["HIP loader<br/>hipModuleLoadData → launch<br/>sharedMemBytes=0 · descriptor packing"]
+        CUDA["CUDA Driver API<br/>dlopen(libcuda.so.1) — cross-ready<br/>exit 77 when no driver"]
+    end
+
+    subgraph TL["Tools (branch off the compile path)"]
+        TUNE["Autotuner (tune)"]
+        BENCH["Benchmark harness<br/>kernelh + rocBLAS + HIP refs<br/>+ cuBLAS/CUTLASS cross"]
+        EXPL["Explorer — per-pass artifact explorer"]
+        REP["Occupancy + resource reporters · charts"]
+    end
+
+    GPUS["Target GPUs<br/>AMD gfx1101 — RX 7800 XT (local)<br/>NVIDIA sm_80 — RTX 6000 Ada (cross-validated)"]
+
+    DSL -->|emit| ATOM -->|runDefaultPipeline| PIPELINE -->|emitGpuModule| MLIR
+    MLIR --> NVVM
+    MLIR --> ROCDL
+    NVVM -->|cubin / PTX| CUDA
+    ROCDL -->|HSACO / ISA| HIP
+    HIP --> GPUS
+    CUDA --> GPUS
+
+    PIPELINE -.-> TUNE
+    PIPELINE -.-> BENCH
+    PIPELINE -.-> EXPL
+    PIPELINE -.-> REP
+
+    class DSL,ATOM,PIPELINE,MLIR comp
+    class NVVM,ROCDL be
+    class HIP,CUDA rt
+    class TUNE,BENCH,EXPL,REP tl
+    class GPUS gpu
+```
+
+**NVIDIA/AMD card architecture — how kernel.h's unified abstraction maps onto each family:**
+
+```mermaid
+flowchart TB
+    classDef sh fill:#1565c0,stroke:#0d47a1,color:#fff
+    classDef amd fill:#e53935,stroke:#b71c1c,color:#fff
+    classDef nv fill:#2e7d32,stroke:#1b5e20,color:#fff
+
+    subgraph AMDSIDE["AMD — gfx1101 · Navi 32"]
+        AF["compute units: 30 live (runtime-query hook;<br/>table cu_count=0 = query required)<br/>LDS 64 KiB/CU · wavefront 32<br/>max threads 1024/CU · 32 waves/CU · 6144 VGPRs/CU"]
+        AM["memory: global (HBM, ~16 GiB) + LDS (shared)<br/>static shared via memref.global addrspace(3) globals<br/>→ per-workgroup LDS"]
+        AR["runtime: HIP backend<br/>hipModuleLoadData → hipModuleLaunchKernel"]
+        AMDGPU["RX 7800 XT<br/>gfx1101 · live local execution"]
+    end
+
+    subgraph SH["kernel.h unified abstraction — device-limits table + descriptor ABI"]
+        TBL["device-limits table — single source of truth<br/>read by verifier · launch verifier · occupancy"]
+        ABI["memref descriptor ABI<br/>[allocated ptr, aligned ptr, offset, sizes[], strides[]]<br/>2N+3 slots — identical on both vendors"]
+        STATIC["static shared only · sharedMemBytes=0 · no dynamic LDS"]
+        MAP["wavefront = warp = 32 → wavefront_size field<br/>LDS ↔ shared → lds_bytes_per_workgroup<br/>(65536 vs 49152)"]
+    end
+
+    subgraph NVSIDE["NVIDIA — sm_80 · A100-class (cross); RTX 6000 Ada validated"]
+        NF["streaming multiprocessors (SM)<br/>shared memory 49,152 B/block · warp 32<br/>max threads 1024 · 64 warps/SM<br/>65,536 32-bit registers/SM"]
+        NM["memory: global + shared<br/>same addrspace(3) globals → .shared"]
+        NR["runtime: CUDA Driver API<br/>dlopen(libcuda.so.1) — never linked at build"]
+        NVGPU["RTX 6000 Ada<br/>sm_80 · cross-validated"]
+    end
+
+    TBL -.-> AF
+    TBL -.-> NF
+    ABI -.-> AR
+    ABI -.-> NR
+    AF --> AM --> AR --> AMDGPU
+    NF --> NM --> NR --> NVGPU
+
+    class TBL,ABI,STATIC,MAP sh
+    class AF,AM,AR,AMDGPU amd
+    class NF,NM,NR,NVGPU nv
+```
+
 ## Benchmark summary
 
 All numbers are **real measurements** from `build/bench/results.csv` /
