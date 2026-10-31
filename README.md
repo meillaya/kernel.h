@@ -173,8 +173,7 @@ open.
 
 ## Further reading
 
-- [Technical report](docs/REPORT.md): IR design, pass pipeline, MLIR lowering,
-  backends, runtime, autotuning, occupancy, full measurement tables, and limits.
-  Build the PDF with `latexmk -pdf docs/report.tex` inside the devenv shell.
-- [Engineering blog post](docs/blog/kernel-h.md): the GEMM GPU hang, the CUDA
-  dlopen bugs, and the autotuner finding.
+The [technical report](docs/REPORT.md) covers IR design, the pass pipeline, MLIR
+lowering, backends, runtime, autotuning, occupancy, full measurement tables, and
+limits. Build the PDF with `latexmk -pdf docs/report.tex` inside the devenv
+shell.
