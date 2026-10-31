@@ -24,9 +24,9 @@ And then the second honest answer: the [MLIR](https://arxiv.org/abs/2002.11054) 
 
 One kernel description, both vendors, one pipeline:
 
-![kernel.h architecture](../diagrams/architecture.png)
+![kernel.h compile path](../diagrams/architecture.png)
 
-*The full compile pipeline — DSL → atom IR → seven-pass optimizer → MLIR → NVVM/ROCDL → thin HIP/CUDA runtime. [Edit the diagram in Excalidraw](../diagrams/architecture.excalidraw.json).*
+*The compile pipeline: DSL → atom IR → seven-pass optimizer → MLIR → NVVM/ROCDL code objects. The runtime and device model are in the [runtime diagram](../diagrams/device-model.png). [Edit the diagram in Excalidraw](../diagrams/architecture.excalidraw.json).*
 
 The compiler has three distinct halves. A **C++23 DSL** (`program().tile(...).kernel("gemm")...`) binds a schedule to a named kernel template — there's no general expression language, just a builder for my IR. A **custom structured-SSA IR** called *atom* (`lib/ir`) is the middle: a pinned op inventory, a structural verifier, a deterministic printer, and a full round-trip parser. And the **MLIR back half** (`lib/compiler`) lowers atom to a custom tblgen dialect, then to `gpu`/`scf`/`vector`, then through the vendor serializers.
 
