@@ -12,6 +12,8 @@
 \definecolor{rulecol}{RGB}{200,200,200}
 \definecolor{accent}{RGB}{0,60,120}
 \usepackage[colorlinks=true,linkcolor=accent,urlcolor=accent,citecolor=accent]{hyperref}
+\usepackage{graphicx}
+\graphicspath{{docs/diagrams/}{diagrams/}}
 \usepackage[nameinlink]{cleveref}
 \crefname{lstlisting}{listing}{listings}
 \Crefname{lstlisting}{Listing}{Listings}
@@ -147,67 +149,12 @@ the output against an fp64 reference, and the benchmark harness compares it agai
 
 \begin{figure}[H]
 \centering
-\resizebox{\textwidth}{!}{%
-\begin{tikzpicture}[
-  node distance=5pt,
-  box/.style={draw, rounded corners=2pt, align=center, inner sep=4pt,
-              fill=white, font=\small},
-  stage/.style={box, draw=accent, thick, minimum width=5.4cm},
-  side/.style={box, draw=black!40, minimum width=4.6cm},
-  arrow/.style={-{Stealth[length=2.2mm]}, thick, draw=accent},
-  srrow/.style={-{Stealth[length=2.2mm]}, thick, draw=black!50},
-  lbl/.style={font=\scriptsize\itshape, text=black!55},
-]
-  % ---- left column: compiler front-end ----
-  \node[stage] (dsl) {\textbf{C++23 DSL}\\ \texttt{(include/kernelh/dsl)}\\%
-    \texttt{program().tile(32,32,32)}\\%
-    \texttt{.map\_blocks().kernel("gemm")}\\\texttt{.shape(\{m,n,k\}).emit()}};
-  \node[stage, below=of dsl] (atom) {\textbf{atom IR} (structured SSA)\\%
-    \texttt{(lib/ir)}: op inventory, verifier,\\\texttt{.atom} printer/parser, dump hooks};
-  \node[stage, below=of atom] (passes) {\textbf{7-pass pipeline}\\ \texttt{(lib/passes)}\\%
-    \texttt{canonicalize $\to$ cse $\to$ fuse $\to$ tile}\\%
-    \texttt{promote-shared $\to$ vectorize $\to$ unroll}\\%
-    dumps \texttt{01-*.atom} \dots \texttt{07-*.atom}};
-  \node[stage, below=of passes] (dialect) {\textbf{atom MLIR dialect} (tblgen)\\%
-    $\to$ \texttt{gpu.module}: \texttt{gpu.func} +\\\texttt{memref.global} addrspace-3 LDS\\%
-    $\to$ \texttt{scf}/\texttt{vector}/\texttt{arith}/\texttt{memref}\\%
-    (device-only, descriptor ABI)};
-  \node[stage, below=of dialect] (backends) {\textbf{Vendor backends}\\%
-    \texttt{(lib/compiler/backends.cpp)}\\%
-    \textbf{NVVM} (sm\_80): \texttt{vecadd.ptx},\\\texttt{vecadd.cubin} (ptxas+libdevice)\\%
-    \textbf{ROCDL} (gfx1101): \texttt{gemm.isa},\\\texttt{gemm.hsaco} (ld.lld+device-libs)};
-
-  % ---- right column: runtime ----
-  \node[stage, right=28mm of atom, yshift=4mm] (runtime) {\textbf{thin runtime}\\%
-    \texttt{(lib/runtime)}\\%
-    \texttt{hipModuleLoadData} +\\descriptor-ABI launch (local)\\%
-    + CUDA Driver API via\\\texttt{dlopen("libcuda.so.1")} (cross)};
-  \node[stage, below=of runtime] (gpu) {\textbf{GPU}\\%
-    AMD Radeon RX 7800 XT\\\texttt{(gfx1101)}, local execution\\%
-    / RTX 6000 Ada (runs sm\_80 cubin), cross};
-
-  \draw[arrow] (dsl) -- node[lbl, right] {\texttt{emit()}} (atom);
-  \draw[arrow] (atom) -- node[lbl, right] {\texttt{runDefaultPipeline}} (passes);
-  \draw[arrow] (passes) -- node[lbl, right] {\texttt{emitGpuModule}} (dialect);
-  \draw[arrow] (dialect) -- node[lbl, right] {backends} (backends);
-  \draw[arrow] (backends.east) -- node[lbl, above] {HSACO/cubin} (runtime.west);
-  \draw[arrow] (runtime) -- (gpu);
-
-  % ---- verification branch ----
-  \node[side, right=4mm of gpu, yshift=6mm] (verify) {\textbf{verification / benchmark}\\%
-    numeric e2e vs fp64 CPU reference\\bench vs rocBLAS (GFLOPS)\\%
-    autotuner + resources + occupancy\\+ charts};
-  \draw[srrow, dashed] (verify.west) -- (gpu.east);
-
-  \node[side, left=4mm of atom, yshift=-6mm] (e2e) {\textbf{end-to-end proof}\\%
-    \texttt{kernelh explore} self-check:\\re-parse + re-verify every dump\\%
-    \texttt{ctest} \texttt{[gpu]} e2e on live\\device (324/324)};
-  \draw[srrow, dashed] (e2e.east) -- (atom.west);
-\end{tikzpicture}}
-\caption{End-to-end architecture of \texttt{kernel.h}: C++23 DSL to atom IR, seven passes,
-the atom MLIR dialect, \texttt{gpu}/\texttt{scf}/\texttt{vector}, NVVM/ROCDL, then
-PTX/cubin/HSACO/ISA. The thin HIP/CUDA runtime loads the code object and launches it on the
-GPU.}
+\includegraphics[width=\textwidth]{report-architecture.png}
+\caption{End-to-end architecture of \texttt{kernel.h}. A kernel description flows from the
+C++23 DSL through atom IR and the seven passes to the atom MLIR dialect and the
+\texttt{gpu}/\texttt{scf}/\texttt{vector} device module. NVVM and ROCDL serialize the module
+to PTX/cubin and ISA/HSACO. The runtime loads either code object and launches it on the GPU.
+The left panels list the checks and artifacts that accompany the compile path.}
 \label{fig:arch}
 \end{figure}
 
@@ -357,43 +304,8 @@ before and after excerpts from \texttt{artifacts/run-report-amd/} and
 
 \begin{figure}[H]
 \centering
-\resizebox{\textwidth}{!}{%
-\begin{tikzpicture}[
-  node distance=2pt,
-  pbox/.style={draw, rounded corners=2pt, align=center, inner sep=4pt, fill=white,
-               minimum height=1.15cm, font=\scriptsize},
-  parr/.style={-{Stealth[length=2mm]}, thick, draw=accent},
-  lbl/.style={font=\scriptsize\itshape, text=black!55, align=center},
-]
-  \node[pbox] (c1) {canonicalize};
-  \node[pbox, right=of c1] (c2) {cse};
-  \node[pbox, right=of c2] (c3) {fuse};
-  \node[pbox, right=of c3] (c4) {tile};
-  \node[pbox, right=of c4] (c5) {promote-shared};
-  \node[pbox, right=of c5] (c6) {vectorize};
-  \node[pbox, right=of c6] (c7) {unroll};
-  \draw[parr] (c1) -- (c2);
-  \draw[parr] (c2) -- (c3);
-  \draw[parr] (c3) -- (c4);
-  \draw[parr] (c4) -- (c5);
-  \draw[parr] (c5) -- (c6);
-  \draw[parr] (c6) -- (c7);
-  \node[below=of c1, lbl] (d1) {const folding,\\identity elision, DCE};
-  \node[below=of c2, lbl] (d2) {value-numbering,\\dead-op elimination};
-  \node[below=of c3, lbl] (d3) {same-domain\\elementwise fusion};
-  \node[below=of c4, lbl] (d4) {block/tile loop\\+ boundary guards};
-  \node[below=of c5, lbl] (d5) {global$\to$shared\\staging};
-  \node[below=of c6, lbl] (d6) {vector loads/\\(re)compute};
-  \node[below=of c7, lbl] (d7) {full/partial\\unroll};
-  \draw[-{Stealth[length=1.6mm]}, black!40] (c1.south) -- (d1.north);
-  \draw[-{Stealth[length=1.6mm]}, black!40] (c2.south) -- (d2.north);
-  \draw[-{Stealth[length=1.6mm]}, black!40] (c3.south) -- (d3.north);
-  \draw[-{Stealth[length=1.6mm]}, black!40] (c4.south) -- (d4.north);
-  \draw[-{Stealth[length=1.6mm]}, black!40] (c5.south) -- (d5.north);
-  \draw[-{Stealth[length=1.6mm]}, black!40] (c6.south) -- (d6.north);
-  \draw[-{Stealth[length=1.6mm]}, black!40] (c7.south) -- (d7.north);
-\end{tikzpicture}}
-\caption{The seven-pass pipeline, in canonical order
+\includegraphics[width=\textwidth]{report-pipeline.png}
+\caption{The seven-pass pipeline in canonical order
 (\texttt{kernelh::passes::defaultPipelineOrder()}).}
 \label{fig:passflow}
 \end{figure}
