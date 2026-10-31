@@ -13,7 +13,7 @@ cache/
 .omo/
 .codegraph
 
-# LaTeX build artifacts (docs/report.pdf is a build artifact — not committed)
+# LaTeX build artifacts. docs/report.pdf is committed.
 docs/*.aux
 docs/*.bbl
 docs/*.blg
@@ -26,3 +26,4 @@ docs/*.toc
 docs/*.run.xml
 docs/*.synctex.gz
 docs/*.pdf
+!docs/report.pdf

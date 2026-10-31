@@ -173,7 +173,7 @@ open.
 
 ## Further reading
 
-The [technical report](docs/REPORT.md) covers IR design, the pass pipeline, MLIR
-lowering, backends, runtime, autotuning, occupancy, full measurement tables, and
-limits. Build the PDF with `latexmk -pdf docs/report.tex` inside the devenv
-shell.
+The [technical report](docs/report.pdf) covers IR design, the pass pipeline,
+MLIR lowering, backends, runtime, autotuning, occupancy, full measurement
+tables, and limits. Its source is [docs/report.tex](docs/report.tex); build it
+with `latexmk -lualatex docs/report.tex`.
